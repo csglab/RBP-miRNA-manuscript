@@ -1,0 +1,170 @@
+---
+title: "Correction of mRNA stability estimates of ENCODE RBP KD samples for
+  batch effects"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+set.seed(1)
+```
+
+Note: Changes in mRNA stability in each sample were first inferred using BETAS.
+
+# Load libraries
+
+```{r}
+library(MASS)
+library(gplots)
+```
+
+# Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS. These were previously filtered to remove estimates with stdev > 0.5 (which were replaced with NA).
+
+```{r}
+ddf <- data.table::fread(here("ENCODE_RBP_KD", "data", "BETAS.ddf.filtered.allSamples.txt"), header=TRUE) |>
+  tibble::column_to_rownames("gene_ID")
+dfi <- data.table::fread(here("ENCODE_RBP_KD", "data", "BETAS.dfi.allSamples.txt"), header=TRUE) |>
+  tibble::column_to_rownames("gene_ID")
+```
+
+# Correction for transcription-associated bias (without batch correction)
+
+For each cell line separately, drop controls, filter out genes with fewer than a defined number of non-NA ddf values, fit a robust regression of ddf ~ dfi per gene to regress out the transcription-associated component (bias), and plot a correlation heatmap of the resulting residuals across samples 
+
+```{r}
+min_valid_samples <- 20
+palette <- colorRampPalette(c("blue", "white", "red"))
+
+process_cell_line <- function(cell_line) {
+  
+  # For a given cell line, load its sample list, subset ddf/dfi to those samples
+  samples <- read.table(here("ENCODE_RBP_KD", "data", paste0("ENCODE_sample_list_", cell_line, ".txt")))[,1]
+  ddf_cl <- ddf[, samples]
+  dfi_cl <- dfi[, samples]
+
+  # Drop control experiments (we used the sample average as reference)
+  ddf_noCtrl <- ddf_cl[, !grepl("ctrl", colnames(ddf_cl))]
+  dfi_noCtrl <- dfi_cl[, !grepl("ctrl", colnames(dfi_cl))]
+
+  # filter out genes with fewer than `min_valid_samples` non-NA ddf values
+  keep <- rowSums(!is.na(ddf_noCtrl)) >= min_valid_samples
+  ddf_fltr <- ddf_noCtrl[keep, ]
+  dfi_fltr <- dfi_noCtrl[keep, ]
+
+  # Convert to matrices
+  mat_ddf_fltr <- as.matrix(ddf_fltr)
+  mat_dfi_fltr <- as.matrix(dfi_fltr)
+
+  # Fit a robust regression of ddf ~ dfi per gene to regress out the transcription-associated component (bias) (no batch correction yet, since we want to visualize the batch effects)
+  results <- t(vapply(1:nrow(mat_ddf_fltr), function(i) {
+    residuals(rlm(mat_ddf_fltr[i,] ~ mat_dfi_fltr[i,], na.action=na.exclude, maxit=200))
+  }, FUN.VALUE = numeric(ncol(mat_ddf_fltr))))
+  dimnames(results) <- list(rownames(mat_ddf_fltr), colnames(mat_ddf_fltr))
+
+  # Correlation heatmap of the residuals across samples, saved as a PDF
+  pearson <- cor(results, use = "complete.obs")
+
+  pdf(here("ENCODE_RBP_KD", "output", "figures", paste0("Similarity_heatmap_ENCODE_", cell_line, "_samples_stability.pdf")), width = 200, height = 200)
+  heatmap.2(
+    pearson, 
+    trace = "none", 
+    col = palette, 
+    cexRow = 2, 
+    cexCol = 2,
+    mar=c(25,25),
+    breaks = seq(-1, 1, length.out = 500), keysize = 0.5, cex.main = 3,
+    symm = TRUE, distfun = function(x) as.dist(1 - x))
+  dev.off()
+
+  list(ddf_fltr = ddf_fltr, dfi_fltr = dfi_fltr, results = results, pearson = pearson)
+}
+
+HepG2 <- process_cell_line("HepG2")
+K562 <- process_cell_line("K562")
+
+ddf_HepG2_fltr <- HepG2$ddf_fltr
+dfi_HepG2_fltr <- HepG2$dfi_fltr
+results_HepG2 <- HepG2$results
+
+ddf_K562_fltr <- K562$ddf_fltr
+dfi_K562_fltr <- K562$dfi_fltr
+results_K562 <- K562$results
+```
+
+The dendrogram was manually analyzed to identify broad clusters that had mostly the same release date (and sometimes the same associated control, since these are related to the experiment batch) but consisted of various RBPs, and such clusters were deemed to represent experiments with similar batch effects. At least 20 experiments were included in most batches
+
+# Perform batch correction (at the bias correction step)
+
+Perform batch-corrected robust regression for each cell line
+
+```{r}
+batch_correct_cell_line <- function(cell_line) {
+  
+  # Load batch IDs
+  batches <- read.table(here("ENCODE_RBP_KD", "data", paste0("ENCODE_samples_batches_", cell_line, ".txt")), header=TRUE, row.names=1)
+  
+  # Get the corresponding processed data from the list created earlier
+  process_results <- list(
+    HepG2 = HepG2,
+    K562 = K562
+  )
+
+  ddf_fltr <- process_results[[cell_line]]$ddf_fltr
+  dfi_fltr <- process_results[[cell_line]]$dfi_fltr
+  
+  # Filter batches to retain the same samples as the stability data
+  stopifnot(all(colnames(ddf_fltr) %in% rownames(batches)))
+  batches <- batches[colnames(ddf_fltr), , drop=FALSE]
+  
+  # Convert to matrices
+  mat_ddf_fltr <- as.matrix(ddf_fltr)
+  mat_dfi_fltr <- as.matrix(dfi_fltr)
+  
+  # Fit robust regression with batch correction for each gene
+  results_corrected <- t(vapply(1:nrow(mat_ddf_fltr), function(i) {
+    residuals(rlm(mat_ddf_fltr[i,] ~ mat_dfi_fltr[i,] + batches[,1], na.action=na.exclude, maxit=200))
+  }, FUN.VALUE = numeric(ncol(mat_ddf_fltr))))
+  dimnames(results_corrected) <- list(rownames(mat_ddf_fltr), colnames(mat_ddf_fltr))
+  
+  # Add cell line to sample names
+  colnames(results_corrected) <- paste(colnames(results_corrected), "_", cell_line, sep="")
+  
+  # Save results
+  write.table(results_corrected, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("residuals_ddf_dfi_batches_", cell_line, "_ROBUST.txt")), sep="\t", row.names=TRUE, col.names=TRUE)
+  
+  # Calculate correlation matrix
+  pearson <- cor(results_corrected, use = "complete.obs")
+  
+  # Save correlation heatmap
+  pdf(here("ENCODE_RBP_KD", "output", "figures", paste0("Similarity_heatmap_ENCODE_", cell_line, "_samples_stability_batches.pdf")), width=200, height=200)
+  heatmap.2(
+    pearson, 
+    trace="none", 
+    col=palette, 
+    cexRow=2, 
+    cexCol=2, 
+    breaks=seq(-1,1,length.out=500), 
+    mar=c(40,40), 
+    keysize=0.5, 
+    cex.main=3, 
+    symm=TRUE, 
+    distfun=function(x) as.dist(1-x))
+  dev.off()
+  
+  list(results = results_corrected, pearson = pearson)
+}
+
+# Apply batch correction to both cell lines
+batch_corrected <- sapply(c("HepG2", "K562"), batch_correct_cell_line, simplify=FALSE)
+```
+
+```{r}
+sessionInfo()
+```

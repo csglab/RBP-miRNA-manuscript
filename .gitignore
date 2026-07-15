@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# renv library (DO NOT COMMIT)
+renv/library/
+renv/staging/
+
+# optional cache
+renv/cache/

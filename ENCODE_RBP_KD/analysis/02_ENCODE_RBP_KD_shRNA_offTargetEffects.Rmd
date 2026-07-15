@@ -1,0 +1,255 @@
+---
+title: "shRNA positions associated with changes in mRNA stability in ENCODE RBP KD samples"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+
+```{r}
+library(Biostrings)
+library(stringr)
+library(seqRFLP)
+library(data.table)
+library(gplots)
+library(here)
+```
+
+First, we look at associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability. 
+
+Load shRNA sequences file
+
+```{r}
+RNAi_seqs <- read.table(here("ENCODE_RBP_KD", "data", "RNAi_sequences.txt"), header = T)
+
+# Format the Experiment names appropriately
+RNAi_seqs$Experiment <- gsub("/experiments/", "", RNAi_seqs$Experiment)
+RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
+
+# Format the shrNA sequence appropriately
+RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
+```
+
+Load the 3'UTR sequences
+
+```{r}
+UTR_seq <- as.character(readDNAStringSet(here("ENCODE_RBP_KD", "data", "3UTR_seq.fa")))
+names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
+```
+
+Trim to keep the first 2000bps of each 3'UTR
+
+```{r}
+UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
+```
+
+Load bias and batch corrected stability estimates
+
+```{r}
+stab_HepG2 <- read.table(here("ENCODE_RBP_KD", "data", "residuals_ddf_dfi_batches_HepG2_ROBUST.txt"), header=TRUE, row.names=1)
+stab_K562 <- read.table(here("ENCODE_RBP_KD", "data", "residuals_ddf_dfi_batches_K562_ROBUST.txt"), header=TRUE, row.names=1)
+```
+
+Filter stability and UTR sequences tables to keep the same genes in the same order
+
+```{r}
+common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
+common_genes_K562 <- intersect(row.names(stab_K562), names(UTR_seq))
+
+UTR_HepG2_fltr <- UTR_seq[common_genes_HepG2]
+stab_HepG2_fltr <- stab_HepG2[common_genes_HepG2, ]
+
+UTR_K562_fltr <- UTR_seq[common_genes_K562]
+stab_K562_fltr <- stab_K562[common_genes_K562, ]
+```
+
+For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurence in the 3'UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers, so see the comments in the code for description of the next steps.
+
+THE CSV FILES THAT RESULT FROM THIS SECTION ARE ALREADY INCLUDED, so you can move on to the next section without having to run this one (it takes a very long time to run).
+
+```{r}
+for(len in c(6,7)){
+  for (cell in c("HepG2", "K562"))
+  {
+    # UTR sequences for the cell line
+    UTRs <- get(paste("UTR_", cell, "_fltr", sep=""))
+    
+    # Stability data for the cell line
+    stab <- get(paste("stab_", cell, "_fltr", sep=""))
+    
+    # For each sample
+    for (i in 1:ncol(stab))
+    {
+      # Define the experiment
+      experiment <- gsub("_.*","", colnames(stab)[i])
+      
+      # If the experiment is not in the shRNA sequences table, write stability as NA and remove after this part
+      if (!(experiment %in% RNAi_seqs$Experiment))
+      {
+        next
+        print("Experiment not found in the shRNA sequences table")
+      }
+      
+      # Define the shRNA sequence
+      shRNA <- RNAi_seqs[RNAi_seqs$Experiment == experiment, ]$RNAi_sequence
+      
+      # Use a sliding window to get all 6-mers/7-mers in the shRNAs
+      k <- len
+      n <- nchar(shRNA)
+      mers <- substring(shRNA, 1:(n-k+1), k:n)
+      
+      # Reverse complement to get target sequences
+      mers <- unlist(lapply(mers, revComp))
+      
+      # Make a table to write the 6-mer/7-mer counts, with the genes as rows and the 6-mers/7-mers as columns
+      mers_counts <- as.data.frame(matrix(NA, ncol = length(mers), nrow=nrow(stab)))
+      row.names(mers_counts) <- row.names(stab)
+      colnames(mers_counts) <- mers
+      
+      # Fill the table with counts of each 6-mer/7-mer in the 3'UTR sequences for each gene
+      for (g in 1:nrow(mers_counts))
+      {
+        UTR <- UTRs[row.names(mers_counts)[g]]
+        for (mer in colnames(mers_counts))
+        {
+          mers_counts[g, mer] <- str_count(UTR, mer)
+        }
+      }
+      
+      # Delete columns with the same 6-mer/7-mer sequence, but record their position and corresponding sequence first
+      del_cols <- which(duplicated(colnames(mers_counts)))
+      del_cols_mers <- colnames(mers_counts)[duplicated(colnames(mers_counts))]
+      mers_counts_2 <- mers_counts[, !(duplicated(colnames(mers_counts)))]
+      
+      # Save the count table for later use
+      write.csv(mers_counts_2, file=here("ENCODE_RBP_KD", "output", "supplementary_tables", paste(experiment, "_shRNA_", len, "nts_counts.csv", sep="")))
+      
+      # Throw error if there are columns with all 0s
+      if (sum(colSums(mers_counts_2) == 0) > 0)
+      {
+        print("ERROR: Some kmers don't occur in some UTR(s)")
+        break
+      }
+      
+      # Perform glm on sample stability data using the kmers as predictor
+      fit <- glm(stab[, i] ~ data.matrix(mers_counts_2), na.action=na.exclude)
+      
+      # Fill in the table of regression coefficients
+      coeffs <- as.data.frame(coef(fit)[-1])
+      row.names(coeffs) <- gsub(".*)", "", row.names(coeffs))
+      pvals <- as.data.frame(coef(summary(fit))[,4][-1])
+      row.names(pvals) <- gsub(".*)", "", row.names(pvals))
+      
+      # Put back the kmers that were deleted, in both the coefficients and p-values tables
+      coeffs_complete <- cbind(row.names(coeffs), coeffs[,1])
+      coeffs_complete_names <- row.names(coeffs)
+      
+      pvals_complete <- cbind(row.names(pvals), pvals[,1])
+      pvals_complete_names <- row.names(pvals)
+      
+      if (length(del_cols) > 0)
+      {
+        for (x in 1:length(del_cols))
+        {
+          coeffs_complete_names <- c(coeffs_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], coeffs_complete_names[(del_cols[x]):length(coeffs_complete_names)])
+          coeffs_complete <- rbind(coeffs_complete[1:(del_cols[x]-1), ], coeffs_complete[coeffs_complete[,1] == del_cols_mers[x], ], coeffs_complete[(del_cols[x]):nrow(coeffs_complete), ])
+        }
+        
+        for (x in 1:length(del_cols))
+        {
+          pvals_complete_names <- c(pvals_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], pvals_complete_names[(del_cols[x]):length(pvals_complete_names)])
+          pvals_complete <- rbind(pvals_complete[1:(del_cols[x]-1), ], pvals_complete[pvals_complete[,1] == del_cols_mers[x], ], pvals_complete[(del_cols[x]):nrow(pvals_complete), ])
+        }      
+      }
+      
+      # Save the tables of coefficients and p-values
+      write.csv(coeffs_complete, file=here("ENCODE_RBP_KD", "output", "supplementary_tables", paste(colnames(stab)[i], "_regressionCorrectionStabShRNA", len, "nts_coeffs.csv", sep="")))
+      write.csv(pvals_complete, file=here("ENCODE_RBP_KD", "output", "supplementary_tables", paste(colnames(stab)[i], "_regressionCorrectionStabShRNA", len, "nts_pvals.csv", sep="")))
+    }
+  }
+}
+  
+```
+
+Now we want to identify and visualize the shRNA positions most predictive of mRNA stability. We repeat the same procedure for 6-mers and 7-mers separately, so see comments in the code for next steps.
+
+```{r}
+
+for(len in c(6,7)){
+ 
+   # Load the regression coefficients from the previous section for all samples
+  coeff_files <- list.files(here("ENCODE_RBP_KD", "data"), pattern = paste("regressionCorrectionStabShRNA", len, "nts_coeffs", sep=""), full.names = T)
+  coeff_data <- lapply(coeff_files, fread, header=T)
+  coeff_data <- lapply(coeff_data, function(x) as.vector(as.data.frame(x)[,3]))
+  max_len <- as.numeric(max(names(table(unlist(lapply(coeff_data, length))))))
+  
+  # Max shRNA length is 54, some are shorter, so fill the vectors of coefficients with NAs so that all have length 54
+  
+  for (i in 1:length(coeff_data))
+  {
+    init_len <- length(coeff_data[[i]])
+    nb_missing <- max_len - init_len
+    coeff_data[[i]] <- c(coeff_data[[i]], rep(NA, nb_missing))
+  }
+    
+  # Make a big table with all of the coefficients
+  coeffs <- do.call("rbind", coeff_data)
+  sample_names <- gsub("\\./", "", coeff_files)
+  sample_names <- gsub("_regressionCorrectionStabShRNA.*", "", sample_names)
+  row.names(coeffs) <- sample_names
+  colnames(coeffs) <- c(1:max_len)
+    
+  # Replace NAs with 0s
+  coeffs[is.na(coeffs)] <- 0
+  
+  # Load the p-values from the previous section for all samples
+  pval_files <- list.files(here("ENCODE_RBP_KD", "data"), pattern = paste("regressionCorrectionStabShRNA", len, "nts_pvals", sep=""), full.names = T)
+  pval_data <- lapply(pval_files, fread, header=T)
+  pval_data <- lapply(pval_data, function(x) as.vector(as.data.frame(x)[,3]))
+  max_len <- as.numeric(max(names(table(unlist(lapply(pval_data, length))))))
+  
+  # Max shRNA length is 54, some are shorter, so fill the p-values vectors with NAs so that all have length 54, like we did for coefficients
+  
+  for (i in 1:length(pval_data))
+  {
+    init_len <- length(pval_data[[i]])
+    nb_missing <- max_len - init_len
+    pval_data[[i]] <- c(pval_data[[i]], rep(NA, nb_missing))
+  }
+    
+  # Make a big matrix with all of the p-values  
+  pvals <- do.call("rbind", pval_data)
+  sample_names <- gsub("\\./", "", pval_files)
+  sample_names <- gsub("_regressionCorrectionStabShRNA.*", "", sample_names)
+  row.names(pvals) <- sample_names
+  colnames(pvals) <- c(1:max_len)
+  
+  # Transform to signed log10(p-values)
+  signs <- sign(coeffs)
+  slog10pvals <- abs(log10(pvals))*signs
+    
+  # Replace NAs with 0s
+  slog10pvals[is.na(slog10pvals)] <- 0
+    
+  # Make a heatmap
+  palette <- colorRampPalette(c("blue", "white", "red"))
+  tryCatch({
+    pdf(here("ENCODE_RBP_KD", "output", "figures", paste("ENCODE_RBPKD_samples_shRNA_position", len, "nts_associationStability_signedlog10pvals.pdf", sep="")), height = 2, width = 7)
+    heatmap.2(slog10pvals, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-10,10,length.out=100), mar=c(2,2), key=F, Colv = F, 
+              hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", lwid = c(1,10))
+    dev.off()
+  }, error=function(e){})
+}
+  
+```
+
+![Heatmap of associations between shRNA 6-mer counts and mRNA stability](ENCODE_RBPKD_samples_shRNA_position6nts_associationStability_signedlog10pvals.pdf){width=65%}
+
+![Heatmap of associations between shRNA 7-mer counts and mRNA stability](ENCODE_RBPKD_samples_shRNA_position7nts_associationStability_signedlog10pvals.pdf){width=65%} 
+
+We see that for 6-mers (top), positions 34-38 on shRNA are associated with decreased mRNA stability. It is very similar for 7-mers (bottom), except that the region that seems to mediate the off-target effects is from position 34 to 37 instead of 34 to 38.
