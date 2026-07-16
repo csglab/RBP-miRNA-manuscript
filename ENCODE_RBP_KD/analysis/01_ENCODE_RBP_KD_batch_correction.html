@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Correction of mRNA stability estimates of ENCODE RBP KD samples for batch effects</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-July-15</h4>
+<h4 class="date">2026-July-16</h4>
 
 </div>
 
@@ -1942,7 +1942,7 @@ results_K562 &lt;- K562$results</code></pre>
   colnames(results_corrected) &lt;- paste(colnames(results_corrected), &quot;_&quot;, cell_line, sep=&quot;&quot;)
   
   # Save results
-  write.table(results_corrected, file = here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;residuals_ddf_dfi_batches_&quot;, cell_line, &quot;_ROBUST.txt&quot;)), sep=&quot;\t&quot;, row.names=TRUE, col.names=TRUE)
+  write.csv(results_corrected, file = here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;ENCODE_RBP_KD_bias_batch_corrected_stability_&quot;, cell_line, &quot;.csv&quot;)), row.names=TRUE)
   
   # Calculate correlation matrix
   pearson &lt;- cor(results_corrected, use = &quot;complete.obs&quot;)

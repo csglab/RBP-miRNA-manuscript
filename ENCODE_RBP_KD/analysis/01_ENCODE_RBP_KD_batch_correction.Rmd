@@ -1,6 +1,5 @@
 ---
-title: "Correction of mRNA stability estimates of ENCODE RBP KD samples for
-  batch effects"
+title: "Correction of mRNA stability estimates of ENCODE RBP KD samples for batch effects"
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
 output: 
@@ -137,7 +136,7 @@ batch_correct_cell_line <- function(cell_line) {
   colnames(results_corrected) <- paste(colnames(results_corrected), "_", cell_line, sep="")
   
   # Save results
-  write.table(results_corrected, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("residuals_ddf_dfi_batches_", cell_line, "_ROBUST.txt")), sep="\t", row.names=TRUE, col.names=TRUE)
+  write.csv(results_corrected, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("ENCODE_RBP_KD_bias_batch_corrected_stability_", cell_line, ".csv")), row.names=TRUE)
   
   # Calculate correlation matrix
   pearson <- cor(results_corrected, use = "complete.obs")

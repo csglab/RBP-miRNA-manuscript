@@ -1,18 +1,22 @@
 ---
-title: "miRNA activity in ENCODE RBP KD samples (before correction for shRNA
+title: "miRNA activity in ENCODE RBP KD samples (without correction for shRNA
   off-target effects)"
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
-output: html_document
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+set.seed(1)
 ```
 
-For generation of input data, please see the code for ENCODE_RBP_KD_batch_correction.Rmd
-
-Load libraries 
+# Load libraries 
 
 ```{r}
 library(gplots)
@@ -23,36 +27,31 @@ library(ggplot2)
 library(here)
 ```
 
-Load bias and batch corrected mRNA stability data for ENCODE RBP KD samples.
+# Load bias and batch corrected mRNA stability data for ENCODE RBP KD samples.
 
 ```{r}
+stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_HepG2.csv"), row.names=1)
+stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_K562.csv"), row.names=1)
+```
 
-stab_HepG2 <- read.table(here("ENCODE_RBP_KD", "output", "supplementary_tables", "residuals_ddf_dfi_batches_HepG2_ROBUST.txt"), header=TRUE, row.names=NULL)
-stab_K562 <- read.table(here("ENCODE_RBP_KD", "output", "supplementary_tables", "residuals_ddf_dfi_batches_K562_ROBUST.txt"), header=TRUE, row.names=NULL)
+# Load 3'UTR length and nucleotide composition annotations
+
+```{r}
+UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition.txt"), header=TRUE, row.names=NULL)
+UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length.txt"), header=TRUE, row.names=NULL)
 
 ```
 
-Load 3'UTR length and nucleotide composition annotations
+# Load miRNA-mRNA predicted binding network
 
 ```{r}
-
-UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header=TRUE, row.names=NULL)
-UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header=TRUE, row.names=NULL)
+affinity_miRNAs <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_miRNA_affinity.txt"), header=TRUE, row.names=NULL)
 
 ```
 
-Load miRNA-mRNA predicted binding network
+# Merge the above tables based on gene IDs, separately for each cell line
 
 ```{r}
-
-affinity_miRNAs <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_miRNA_affinity_new.txt"), header=TRUE, row.names=NULL)
-
-```
-
-Merge the above tables based on gene IDs (separate merged tables for each cell line)
-
-```{r}
-
 UTR <- merge(UTR_nt, UTR_length, by=1)
 UTR_affinity <- merge(UTR, affinity_miRNAs, by=1)
 glmMatrix_HepG2 <- merge(stab_HepG2, UTR_affinity, by=1)
@@ -60,7 +59,7 @@ glmMatrix_K562 <- merge(stab_K562, UTR_affinity, by=1)
 
 ```
 
-Create tables where the results from glm will be stored
+# Create tables where the results from glm will be stored
 
 ```{r}
 pval_HepG2 <- matrix(NA, nrow=ncol(stab_HepG2)-1, ncol=ncol(UTR_affinity)-1)
@@ -75,7 +74,9 @@ coeff_HepG2 <- pval_HepG2
 coeff_K562 <- pval_K562
 ```
 
-In each RBP KD sample, run glm where the response variable is the mRNA stability, and the predictor is the miRNA-mRNA predicted binding network, and the confounding variables are 3'UTR_length, 3'UTR nucleotide and dinucleotide composition
+# In each RBP KD sample, infer miRNA activity
+
+Run glm where the response variable is the mRNA stability, the predictor variable is the miRNA-mRNA predicted binding network, and the confounding variables are 3'UTR_length, 3'UTR nucleotide and dinucleotide composition
 
 ```{r}
 for (i in seq_len(ncol(stab_HepG2))[-1]){
@@ -91,7 +92,9 @@ for (i in seq_len(ncol(stab_K562))[-1]){
 }
 ```
 
-For this analysis we do not need the results for the confounding variables, so here we retain only the miRNAs. 
+# Discard 3'UTR variables that are no longer needed
+
+Retain only the miRNA binding variables 
 
 ```{r}
 pval_HepG2 <- pval_HepG2[,22:ncol(pval_HepG2)]
@@ -101,7 +104,7 @@ coeff_HepG2 <- coeff_HepG2[,22:ncol(coeff_HepG2)]
 coeff_K562 <- coeff_K562[,22:ncol(coeff_K562)]
 ```
 
-Perform FDR correction
+# Multiple testing correction
 
 ```{r}
 pval_HepG2_vector <- c(pval_HepG2)
@@ -119,14 +122,14 @@ colnames(FDR_K562) <- colnames(pval_K562)
 row.names(FDR_K562) <- row.names(pval_K562)
 ```
 
-Switch the signs of regression coefficients so that they represent miRNA activity and not target stability (miRNAs all destabilize their targets)
+# Switch the signs of regression coefficients so that they represent miRNA activity and not target stability (miRNAs usually destabilize their targets)
 
 ```{r}
 coeff_HepG2 <- -(coeff_HepG2)
 coeff_K562 <- -(coeff_K562)
 ```
 
-Save results
+# Save results
 
 ```{r}
 write.csv(FDR_HepG2, file="FDR_glm_HepG2.csv")
@@ -140,7 +143,7 @@ write.csv(pval_K562, file="pvalues_glm_K562.csv")
 
 ```
 
-Merge result matrices to have all results from both cell lines 
+# Merge result matrices to have all results from both cell lines 
 
 ```{r}
 coeff_HepG2andK562 <- rbind.fill(as.data.frame(coeff_HepG2), as.data.frame(coeff_K562))
@@ -157,7 +160,7 @@ row.names(FDR_HepG2andK562) <- names_FDR
 
 ```
 
-A bit of reformating to have proper miRNA names
+# Reformating miRNA names
 
 ```{r}
 mirs <- colnames(coeff_HepG2andK562)
@@ -179,7 +182,7 @@ colnames(FDR_HepG2andK562) <- mirs
 
 ```
 
-Define a list of RBPs that have RBP KD samples present in the data
+# List of RBPs that have RBP KD samples present in the data
 
 ```{r}
 extract_string = function(x, n, i){
@@ -197,7 +200,7 @@ RBPs <- gsub("_.*", "", RBPs)
 
 ```
 
-Get a list of interactions that have a significant hit in at least one replicate of at least one cell line
+# List of interactions that have a significant hit in at least one replicate of at least one cell line
 
 ```{r}
 list_sig <- list()
@@ -219,7 +222,9 @@ list_sig <- unique(list_sig)
 
 ```
 
-Log-transform the p-values and create a matrix of signed log10(p-values), where values for any replicates of interactions that don't have at least one significant hit are replaced with 0s
+# Log-transform the p-values and create a matrix of signed log10(p-values)
+
+Where values for any replicates of interactions that don't have at least one significant hit are replaced with 0s
 
 ```{r}
 log_pval_HepG2andK562 <- log10(pval_HepG2andK562)
@@ -247,21 +252,21 @@ for (r in 1:nrow(signed_log_pval_HepG2andK562))
 
 ```
 
-Remove rows and columns that only contain 0s
+# Remove rows and columns that only contain 0s
 
 ```{r}
 signed_log_pval_FDR <- signed_log_pval_FDR[rowSums(signed_log_pval_FDR) != 0, ]
 signed_log_pval_FDR <- signed_log_pval_FDR[, colSums(signed_log_pval_FDR) != 0]
 ```
 
-The previous steps were done for filtering, now we get back all of the values
+# The previous steps were done for filtering, now we get back all of the values
 
 ```{r}
 signed_log_pval_FDR <- signed_log_pval_HepG2andK562[match(row.names(signed_log_pval_FDR), row.names(signed_log_pval_HepG2andK562)), match(colnames(signed_log_pval_FDR), colnames(signed_log_pval_HepG2andK562))]
 signed_log_pval_FDR <- data.matrix(signed_log_pval_FDR)
 ```
 
-Sort the data to get a diagonal of significant hits when making the heatmap
+# Sort the data to get a diagonal of significant hits when making the heatmap
 
 ```{r}
 htmp <- heatmap.2(data.matrix(signed_log_pval_FDR), hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), Colv = F, dendrogram = "row")
@@ -286,7 +291,7 @@ dat_clustered_sorted <- dat_clustered[, cols_sorted]
 
 ```
 
-Get the coefficients sorted in the same way and with the same values removed, and get the absolute value.
+# Get the coefficients sorted in the same way and with the same values removed, and get the absolute value.
 
 ```{r}
 coeffs_fltr_srt <- coeff_HepG2andK562[match(row.names(dat_clustered_sorted), row.names(coeff_HepG2andK562)), match(colnames(dat_clustered_sorted), colnames(coeff_HepG2andK562))]
@@ -294,14 +299,14 @@ coeffs_FDR <- data.matrix(coeffs_fltr_srt)
 coeffs_FDR <- abs(coeffs_FDR)
 ```
 
-Also get back the signed log10(p-values) and sort in the same way
+# Also get back the signed log10(p-values) and sort in the same way
 
 ```{r}
 signed_log_pval_HepG2andK562 <- signed_log_pval_HepG2andK562[match(row.names(dat_clustered_sorted), row.names(coeff_HepG2andK562)), match(colnames(dat_clustered_sorted), colnames(coeff_HepG2andK562))]
 signed_log_pval_HepG2andK562 <- data.matrix(signed_log_pval_HepG2andK562)
 ```
 
-Melt dataframes and combine in preparation for making the heatmap
+# Melt dataframes and combine in preparation for making the heatmap
 
 ```{r}
 signed_log_pval_HepG2andK562 <- as.data.frame(cbind(row.names(signed_log_pval_HepG2andK562), signed_log_pval_HepG2andK562))
@@ -326,7 +331,7 @@ dat_htmp$miRNAs <- factor(dat_htmp$miRNAs, levels = as.character(colnames(signed
 
 ```
 
-Format sample names appropriately, to be used when making the heatmap
+# Reformat sample names 
 
 ```{r}
 rowNames <- extract_string(as.vector(signed_log_pval_HepG2andK562$`RBP KD samples`), 1, 4)
@@ -337,13 +342,13 @@ rowNames <- gsub("_11_", "_", rowNames)
 rowNames <- gsub("_[^_]+_", "_", rowNames)
 ```
 
-The coefficients are represent ln(FC) of miRNA activity right now. Convert to log2 scale.
+# The coefficients are represent ln(FC) of miRNA activity right now. Convert to log2 scale.
 
 ```{r}
 dat_htmp$coeffs <- log2(exp(dat_htmp$coeffs))
 ```
 
-Replace with correct names of the miRNA familes
+# Replace with correct names of the miRNA familes
 
 ```{r}
 lbls <- dat_htmp$miRNAs
@@ -381,7 +386,7 @@ lbls <- gsub("miR-328a$", "miR-328-3p", lbls)
 dat_htmp$miRNAs <- lbls
 ```
 
-Set the p-value and regression coefficient limits for the heatmap color scales
+# Set the p-value and regression coefficient limits for the heatmap color scales
 
 ```{r}
 pval_lim <- 5
@@ -392,7 +397,7 @@ dat_htmp$coeffs[dat_htmp$coeffs > coeff_lim] <- coeff_lim
 dat_htmp$miRNAs <- factor(dat_htmp$miRNAs, levels=unique(dat_htmp$miRNAs))
 ```
 
-Draw the heatmap
+# Make the heatmap
 
 ```{r}
 pdf(here("ENCODE_RBP_KD", "output", "figures", "miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted.pdf"), width = 15, height = 35)
@@ -409,13 +414,12 @@ scale_colour_manual(values=c("transparent", "transparent"))+
 scale_y_discrete(label = rev(rowNames)) +
 scale_fill_gradient2(limits=c(-pval_lim,pval_lim), low="blue", mid="white", high="red") +  # oob=squish
 scale_size("miRNA activity",range = c(0.5, 8), breaks = seq(0, coeff_lim, 0.05), limits=c(0, coeff_lim))+
-#guides(size = guide_legend(override.aes = list(fill = "red")))+
 labs(x="miRNAs",y="RBP KD samples") +
 theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=20), axis.text = element_text(size=14), axis.text.x = element_text(angle=90, size=16, vjust=0.5, hjust=1),legend.position="left", panel.background = element_rect(fill = 'white', colour = 'white'))
 dev.off()
 ```
 
-And make a dendrogram for the heatmap that can be manually added
+# And make a dendrogram for the heatmap that can be manually added
 
 ```{r}
 pdf(here("ENCODE_RBP_KD", "output", "figures", "miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted_dendrogram.pdf"), width = 10, height = 3)
@@ -424,9 +428,8 @@ plot(hc, hang = -1, cex.lab=0.5, cex=0.2, xlab="")
 dev.off()
 ```
 
-Please note that the figure was manually edited to make the final version.
+```{r}
+sessionInfo()
+```
 
-![miRNA activity in ENCODE RBP KD samples before correction for shRNA off-target effects](miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted.pdf){width=65%}
-
-![dendrogram](miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted_dendrogram.pdf){width=65%}
 
