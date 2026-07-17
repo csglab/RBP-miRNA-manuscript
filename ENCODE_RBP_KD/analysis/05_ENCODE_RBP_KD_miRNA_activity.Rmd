@@ -27,6 +27,13 @@ library(ggplot2)
 library(here)
 ```
 
+Identifying candidate RBP-miRNA interactions
+  - Considered all original (from original method) significant hits (FDR < 0.05)
+  - Retrieved corresponding new p-values
+  - FDR correction on this subset of p-values
+  - Filtered for new significant hits (FDR < 0.05)
+  - Candidate interactions: Interactions corresponding to the significant hits where other replicates are in agreement in terms of direction of interaction
+
 Load the differential mRNA stability after correction for bias, batches, and shRNA off-target effects
 
 ```{r}

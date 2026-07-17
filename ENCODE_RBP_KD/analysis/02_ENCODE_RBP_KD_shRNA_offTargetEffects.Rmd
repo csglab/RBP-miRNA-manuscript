@@ -23,9 +23,7 @@ library(data.table)
 library(gplots)
 ```
 
-# First, we look at associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability. 
-
-## Load shRNA sequences file
+# Load shRNA sequences file
 
 ```{r}
 RNAi_seqs <- read.table(here("ENCODE_RBP_KD", "data", "RNAi_sequences.txt"), header = T)
@@ -38,27 +36,27 @@ RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
 RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
 ```
 
-## Load the 3'UTR sequences
+# Load the 3'UTR sequences
 
 ```{r}
 UTR_seq <- as.character(readDNAStringSet(here("ENCODE_RBP_KD", "data", "3UTR_seq.fa")))
 names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
 ```
 
-## Trim to keep the first 2000bps of each 3'UTR
+# Trim to keep the first 2000bps of each 3'UTR
 
 ```{r}
 UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
 ```
 
-## Load bias and batch corrected stability estimates
+# Load bias and batch corrected stability estimates
 
 ```{r}
 stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("ENCODE_RBP_KD_bias_batch_corrected_stability_", "HepG2", ".csv")), row.names=1)
 stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("ENCODE_RBP_KD_bias_batch_corrected_stability_", "K562", ".csv")), row.names=1)
 ```
 
-## Filter stability and UTR sequences tables to keep the same genes in the same order
+# Filter stability and UTR sequences tables to keep the same genes in the same order
 
 ```{r}
 common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
@@ -71,9 +69,19 @@ UTR_K562_fltr <- UTR_seq[common_genes_K562]
 stab_K562_fltr <- stab_K562[common_genes_K562, ]
 ```
 
-## Associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability
+# Summary of steps to identify shRNA positions associated with off-target effects and correct stability estimates for these off-target effects
 
-For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3'UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers, so see the comments in the code for description of the next steps.
+1. Test associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability:
+    - For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3'UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers. Retain regression coefficients and P-values
+2. Identify positions of shRNAs that are predictive of stability changes:
+  - Multiple testing corrections for P-values obtained at step 1 
+  - Filter for significant hits
+  - For each shRNA position, determine if there are more significant hits than expected by chance (Fisher’s test)
+  - Repeat for 6-mers and 7-mers separately
+3. Correct stability estimates for shRNA off-target effects 
+  - Using a regression with 6-mer and 7-mer counts from the positions associated with off-target effects as predictors, retain residuals as corrected stability data
+
+# Test associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability
 
 ```{r}
 # Helper function to reverse complement DNA sequences
@@ -188,6 +196,7 @@ for(len in c(6, 7)) {
     }
   }
 }
+
 ```
 
 # Visualize the shRNA positions most strongly associated with mRNA stability
@@ -245,6 +254,249 @@ for(len in c(6, 7)) {
 ```
 
 We see that for 6-mers (top), positions 34-38 on shRNAs are associated with decreased mRNA stability. It is very similar for 7-mers (bottom), except that the region that seems to mediate the off-target effects is from position 34 to 37 instead of 34 to 38.
+
+# Identify positions of shRNAs that are predictive of stability changes (Fisher's exact test)
+
+Using a Fisher's test to determine for each position, if there are more significant associations (FDR < 0.05) that we would expect by chance. Repeat separately for the coefficients of 6-mers and 7-mers. Then in the regression to correct stability estimates, only use the 6-mers and 7-mers of these positions.
+
+```{r, eval = F}
+
+wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+############## 6 mers sig positions ################
+
+# Load p-values from above regression
+pvals_files <- list.files(path = wd, pattern = "_regressionCorrectionStabShRNA6nts_pvals.csv", full.names = T)
+pvals_data <- lapply(pvals_files, fread)
+head(pvals_data[[1]])
+dim(pvals_data[[1]])
+pvals_data <- lapply(pvals_data, function(x) as.vector(as.data.frame(x)[,3]))
+head(pvals_data[[1]])
+
+
+# Fill in the vectors so that they have equal lengths (add NAs)
+max_len <- as.numeric(max(names(table(unlist(lapply(pvals_data, length))))))
+for (i in 1:length(pvals_data))
+{
+  init_len <- length(pvals_data[[i]])
+  nb_missing <- max_len - init_len
+  pvals_data[[i]] <- c(pvals_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pvals_data, length)))
+
+# Bind pvalue vectors from each sample in a matrix
+pvals <- do.call(rbind, pvals_data)
+head(pvals[,1:5])
+dim(pvals)
+
+# FDR correction
+pvals_vector <- c(pvals)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(pvals), ncol = ncol(pvals))
+head(FDR[,1:5])
+
+# Replace sig adjusted pvals with 1, rest with 0
+FDR_bin <- FDR
+FDR_bin[FDR_bin < 0.5] <- 1
+FDR_bin[FDR >= 0.5] <- 0
+FDR_bin[is.na(FDR)] <- 0
+head(FDR_bin[,1:5])
+
+# For each position, check if there are more 1s than expect by chance using a Fisher's test
+fisher_pval <- rep(NA, max_len)
+fisher_or <- rep(NA, max_len)
+for(x in 1:max_len)
+{
+  nb_sig_posX <- sum(FDR_bin[, x] == 1, na.rm = T)
+  nb_sig_otherPos <- sum(FDR_bin[, -(x)] == 1, na.rm = T)
+  nb_NS_posX <- sum(FDR_bin[, x] == 0, na.rm = T)
+  nb_NS_otherPos <- sum(FDR_bin[, -(x)] == 0, na.rm = T)
+  cont_tbl <- cbind(c(nb_sig_posX, nb_sig_otherPos), c(nb_NS_posX, nb_NS_otherPos))
+  fisher_pval[x] <- fisher.test(cont_tbl)$p.value
+  fisher_or[x] <- fisher.test(cont_tbl)$estimate
+}
+
+# Check positions that have significantly MORE hits than expected by random
+sig_pos_6mers <- which(fisher_pval < 0.05 & fisher_or > 1)
+
+
+############## 7 mers sig positions ################
+
+# Load p-values from above regression
+pvals_files <- list.files(path = wd, pattern = "_regressionCorrectionStabShRNA7nts_pvals.csv", full.names = T)
+pvals_data <- lapply(pvals_files, fread)
+head(pvals_data[[1]])
+dim(pvals_data[[1]])
+pvals_data <- lapply(pvals_data, function(x) as.vector(as.data.frame(x)[,3]))
+head(pvals_data[[1]])
+
+# Fill in the vectors so that they have equal lengths (add NAs)
+max_len <- as.numeric(max(names(table(unlist(lapply(pvals_data, length))))))
+for (i in 1:length(pvals_data))
+{
+  init_len <- length(pvals_data[[i]])
+  nb_missing <- max_len - init_len
+  pvals_data[[i]] <- c(pvals_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pvals_data, length)))
+
+# Bind pvalue vectors from each sample in a matrix
+pvals <- do.call(rbind, pvals_data)
+head(pvals[,1:5])
+dim(pvals)
+
+# FDR correction
+pvals_vector <- c(pvals)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(pvals), ncol = ncol(pvals))
+head(FDR[,1:5])
+
+# Replace sig adjusted pvals with 1, rest with 0
+FDR_bin <- FDR
+FDR_bin[FDR_bin < 0.5] <- 1
+FDR_bin[FDR >= 0.5] <- 0
+FDR_bin[is.na(FDR)] <- 0
+head(FDR_bin[,1:5])
+
+# For each position, check if there are more 1s than expect by chance using a Fisher's test
+fisher_pval <- rep(NA, max_len)
+fisher_or <- rep(NA, max_len)
+for(x in 1:max_len)
+{
+  nb_sig_posX <- sum(FDR_bin[, x] == 1, na.rm = T)
+  nb_sig_otherPos <- sum(FDR_bin[, -(x)] == 1, na.rm = T)
+  nb_NS_posX <- sum(FDR_bin[, x] == 0, na.rm = T)
+  nb_NS_otherPos <- sum(FDR_bin[, -(x)] == 0, na.rm = T)
+  cont_tbl <- cbind(c(nb_sig_posX, nb_sig_otherPos), c(nb_NS_posX, nb_NS_otherPos))
+  fisher_pval[x] <- fisher.test(cont_tbl)$p.value
+  fisher_or[x] <- fisher.test(cont_tbl)$estimate
+}
+
+# Check positions that have significantly MORE hits than expected by random
+sig_pos_7mers <- which(fisher_pval < 0.05 & fisher_or > 1)
+```
+
+# Correct stability estimates for shRNA off-target effects
+
+Using a regression with 6-mer and 7-mer counts from the positions associated with off-target effects as predictors, retain residuals as corrected stability data
+
+```{r}
+
+############## Stability correction ################
+
+library(Biostrings)
+library(stringr)
+library(seqRFLP)
+
+# Load RNAi sequences file
+RNAi_seqs <- read.table("RNAi_sequences.txt", header = T)
+
+## Format the Experiment accession
+RNAi_seqs$Experiment <- gsub("/experiments/", "", RNAi_seqs$Experiment)
+RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
+
+## Format the RNAi sequence
+RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
+
+# Load 3'UTR sequences
+UTR_seq <- as.character(readDNAStringSet("/Users/gabrielleperron/Documents/feature_tables/3UTR_seq.fa"))
+names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
+
+# Trim first 2000bps of each 3'UTRs
+UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
+
+# Load bias-corrected stability estimates
+  
+stab_HepG2 <- read.table("residuals_ddf_dfi_batches_HepG2_ROBUST.txt", header=TRUE, row.names=1)
+stab_K562 <- read.table("residuals_ddf_dfi_batches_K562_ROBUST.txt", header=TRUE, row.names=1)
+
+# Filter stab and UTR seq tables to keep same genes in same order
+common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
+common_genes_K562 <- intersect(row.names(stab_K562), names(UTR_seq))
+
+UTR_HepG2_fltr <- UTR_seq[common_genes_HepG2]
+stab_HepG2_fltr <- stab_HepG2[common_genes_HepG2, ]
+
+UTR_K562_fltr <- UTR_seq[common_genes_K562]
+stab_K562_fltr <- stab_K562[common_genes_K562, ]
+
+# Create a corrected stability table
+corr_stab_HepG2 <- stab_HepG2_fltr
+corr_stab_HepG2[] <- NA
+
+corr_stab_K562 <- stab_K562_fltr
+corr_stab_K562[] <- NA
+
+# For each sample, get bias-corrected stab and Use a 6nt-length sliding window to get all 6nt sequences in the shRNA and count their occurence in the 3'UTRs
+
+for (cell in c("HepG2", "K562"))
+{
+  # Define UTR seq set
+  UTRs <- get(paste("UTR_", cell, "_fltr", sep=""))
+  
+  # Define stab set
+  stab <- get(paste("stab_", cell, "_fltr", sep=""))
+
+  # Define corrected stab table
+  corr_stab <- get(paste("corr_stab_", cell, sep=""))
+  
+  # For each sample
+  for (i in 1:ncol(stab))
+  {
+    # Define the experiment
+    experiment <- gsub("_.*","", colnames(stab)[i])
+    
+    # If the experiment is not in the RNAi seq table, put stab as NA and remove after this part
+    if (!(experiment %in% RNAi_seqs$Experiment))
+    {
+      corr_stab[,i] <- NA
+      assign(paste("corr_stab_", cell, sep=""), corr_stab)
+      next
+      print("Experiment not found in the RNAi seq table")
+    }
+    
+    # Load the count tables for 6-mers and 7-mers
+    counts_6mers <- read.csv(paste(experiment, "_shRNA_6nts_counts.csv", sep=""), row.names=1)
+    counts_7mers <- read.csv(paste(experiment, "_shRNA_7nts_counts.csv", sep=""), row.names=1)
+    
+    # Filter for the sig positions, if they exist
+    counts_6mers <- counts_6mers[, which((1:ncol(counts_6mers)) %in% sig_pos_6mers)]
+    counts_7mers <- counts_7mers[, which((1:ncol(counts_7mers)) %in% sig_pos_7mers)]
+    
+    # Merge 6-mers and 7-mers tables
+    counts_mers <- cbind(counts_6mers, counts_7mers)
+
+    # Make sure that mer counts and stab tables have same genes in same order
+    if(all(row.names(counts_mers) != row.names(stab)))
+    {
+      print("ERROR: Different genes/order in stability and 6-mer counts tables")
+      break
+    }
+    
+    # Perform glm on sample stab data using this as predictor
+    fit <- glm(stab[, i] ~ data.matrix(counts_mers), na.action=na.exclude)
+    
+    # Put the residuals in their table, same for coeffs and pvals
+    corr_stab[,i] <- residuals(fit)
+    assign(paste("corr_stab_", cell, sep=""), corr_stab)
+    
+    coeffs <- as.data.frame(coef(fit)[-1])
+    row.names(coeffs) <- gsub(".*)", "", row.names(coeffs))
+    pvals <- as.data.frame(coef(summary(fit))[,4][-1])
+    row.names(pvals) <- gsub(".*)", "", row.names(pvals))
+  }
+}
+
+# Remove samples with all NAs as corrected stability (RNAi sequence not available)
+corr_stab_HepG2 <- corr_stab_HepG2[ , colSums(is.na(corr_stab_HepG2)) < nrow(corr_stab_HepG2)]
+corr_stab_K562 <- corr_stab_K562[ , colSums(is.na(corr_stab_K562)) < nrow(corr_stab_K562)]
+  
+# Save corrected stab tables
+write.csv(corr_stab_HepG2, file = "RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_HepG2.csv")
+write.csv(corr_stab_K562, file = "RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_K562.csv")
+
+```
 
 ```{r}
 sessionInfo()
