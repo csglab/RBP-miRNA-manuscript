@@ -1,2 +1,2 @@
-ENCODE_RBP_KD/data/BETAS.dfi.allSamples.txt filter=lfs diff=lfs merge=lfs -text
 ENCODE_RBP_KD/data/BETAS.ddf.filtered.allSamples.txt filter=lfs diff=lfs merge=lfs -text
+ENCODE_RBP_KD/data/BETAS.dfi.allSamples.txt filter=lfs diff=lfs merge=lfs -text
