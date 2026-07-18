@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">shRNA positions associated with changes in mRNA stability in ENCODE RBP KD samples</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-July-16</h4>
+<h4 class="date">2026-July-17</h4>
 
 </div>
 
@@ -1838,10 +1838,8 @@ function toggle_visibility(id1) {
 library(data.table)
 library(gplots)</code></pre>
 </div>
-<div id="first-we-look-at-associations-between-counts-of-shrna-6-mers7-mers-in-3utrs-and-mrna-stability." class="section level1" number="2">
-<h1><span class="header-section-number">2</span> First, we look at associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability.</h1>
-<div id="load-shrna-sequences-file" class="section level2" number="2.1">
-<h2><span class="header-section-number">2.1</span> Load shRNA sequences file</h2>
+<div id="load-shrna-sequences-file" class="section level1" number="2">
+<h1><span class="header-section-number">2</span> Load shRNA sequences file</h1>
 <pre class="r"><code>RNAi_seqs &lt;- read.table(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, &quot;RNAi_sequences.txt&quot;), header = T)
 
 # Format the Experiment names appropriately
@@ -1851,22 +1849,22 @@ RNAi_seqs$Experiment &lt;- gsub(&quot;/&quot;, &quot;&quot;, RNAi_seqs$Experimen
 # Format the shRNA sequence appropriately
 RNAi_seqs$RNAi_sequence &lt;- gsub(&quot;-&quot;, &quot;&quot;, RNAi_seqs$RNAi_sequence)</code></pre>
 </div>
-<div id="load-the-3utr-sequences" class="section level2" number="2.2">
-<h2><span class="header-section-number">2.2</span> Load the 3’UTR sequences</h2>
+<div id="load-the-3utr-sequences" class="section level1" number="3">
+<h1><span class="header-section-number">3</span> Load the 3’UTR sequences</h1>
 <pre class="r"><code>UTR_seq &lt;- as.character(readDNAStringSet(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, &quot;3UTR_seq.fa&quot;)))
 names(UTR_seq) &lt;- gsub(&quot;.*gene=&quot;, &quot;&quot;, names(UTR_seq))</code></pre>
 </div>
-<div id="trim-to-keep-the-first-2000bps-of-each-3utr" class="section level2" number="2.3">
-<h2><span class="header-section-number">2.3</span> Trim to keep the first 2000bps of each 3’UTR</h2>
+<div id="trim-to-keep-the-first-2000bps-of-each-3utr" class="section level1" number="4">
+<h1><span class="header-section-number">4</span> Trim to keep the first 2000bps of each 3’UTR</h1>
 <pre class="r"><code>UTR_seq &lt;- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))</code></pre>
 </div>
-<div id="load-bias-and-batch-corrected-stability-estimates" class="section level2" number="2.4">
-<h2><span class="header-section-number">2.4</span> Load bias and batch corrected stability estimates</h2>
+<div id="load-bias-and-batch-corrected-stability-estimates" class="section level1" number="5">
+<h1><span class="header-section-number">5</span> Load bias and batch corrected stability estimates</h1>
 <pre class="r"><code>stab_HepG2 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;ENCODE_RBP_KD_bias_batch_corrected_stability_&quot;, &quot;HepG2&quot;, &quot;.csv&quot;)), row.names=1)
 stab_K562 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;ENCODE_RBP_KD_bias_batch_corrected_stability_&quot;, &quot;K562&quot;, &quot;.csv&quot;)), row.names=1)</code></pre>
 </div>
-<div id="filter-stability-and-utr-sequences-tables-to-keep-the-same-genes-in-the-same-order" class="section level2" number="2.5">
-<h2><span class="header-section-number">2.5</span> Filter stability and UTR sequences tables to keep the same genes in the same order</h2>
+<div id="filter-stability-and-utr-sequences-tables-to-keep-the-same-genes-in-the-same-order" class="section level1" number="6">
+<h1><span class="header-section-number">6</span> Filter stability and UTR sequences tables to keep the same genes in the same order</h1>
 <pre class="r"><code>common_genes_HepG2 &lt;- intersect(row.names(stab_HepG2), names(UTR_seq))
 common_genes_K562 &lt;- intersect(row.names(stab_K562), names(UTR_seq))
 
@@ -1876,9 +1874,30 @@ stab_HepG2_fltr &lt;- stab_HepG2[common_genes_HepG2, ]
 UTR_K562_fltr &lt;- UTR_seq[common_genes_K562]
 stab_K562_fltr &lt;- stab_K562[common_genes_K562, ]</code></pre>
 </div>
-<div id="associations-between-counts-of-shrna-6-mers7-mers-in-3utrs-and-mrna-stability" class="section level2" number="2.6">
-<h2><span class="header-section-number">2.6</span> Associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability</h2>
-<p>For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3’UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers, so see the comments in the code for description of the next steps.</p>
+<div id="summary-of-steps-to-identify-shrna-positions-associated-with-off-target-effects-and-correct-stability-estimates-for-these-off-target-effects" class="section level1" number="7">
+<h1><span class="header-section-number">7</span> Summary of steps to identify shRNA positions associated with off-target effects and correct stability estimates for these off-target effects</h1>
+<ol style="list-style-type: decimal">
+<li>Test associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability:
+<ul>
+<li>For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3’UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers. Retain regression coefficients and P-values</li>
+</ul></li>
+<li>Identify positions of shRNAs that are predictive of stability changes:</li>
+</ol>
+<ul>
+<li>Multiple testing corrections for P-values obtained at step 1</li>
+<li>Filter for significant hits</li>
+<li>For each shRNA position, determine if there are more significant hits than expected by chance (Fisher’s test)</li>
+<li>Repeat for 6-mers and 7-mers separately</li>
+</ul>
+<ol start="3" style="list-style-type: decimal">
+<li>Correct stability estimates for shRNA off-target effects</li>
+</ol>
+<ul>
+<li>Using a regression with 6-mer and 7-mer counts from the positions associated with off-target effects as predictors, retain residuals as corrected stability data</li>
+</ul>
+</div>
+<div id="test-associations-between-counts-of-shrna-6-mers7-mers-in-3utrs-and-mrna-stability" class="section level1" number="8">
+<h1><span class="header-section-number">8</span> Test associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability</h1>
 <pre class="r"><code># Helper function to reverse complement DNA sequences
 revComp &lt;- function(seq) {
   as.character(reverseComplement(DNAString(seq)))
@@ -1990,11 +2009,12 @@ for(len in c(6, 7)) {
       )
     }
   }
-}</code></pre>
+}
+
+saveRDS(regression_results, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;rds&quot;, &quot;regression_results.rds&quot;))</code></pre>
 </div>
-</div>
-<div id="visualize-the-shrna-positions-most-strongly-associated-with-mrna-stability" class="section level1" number="3">
-<h1><span class="header-section-number">3</span> Visualize the shRNA positions most strongly associated with mRNA stability</h1>
+<div id="visualize-the-shrna-positions-most-strongly-associated-with-mrna-stability" class="section level1" number="9">
+<h1><span class="header-section-number">9</span> Visualize the shRNA positions most strongly associated with mRNA stability</h1>
 <p>We visualize which shRNA positions (1-54) are most predictive of mRNA stability changes.</p>
 <pre class="r"><code>for(len in c(6, 7)) {
   # Extract regression results for the kmer length
@@ -2043,6 +2063,10 @@ for(len in c(6, 7)) {
   }, error = function(e) {})
 }</code></pre>
 <p>We see that for 6-mers (top), positions 34-38 on shRNAs are associated with decreased mRNA stability. It is very similar for 7-mers (bottom), except that the region that seems to mediate the off-target effects is from position 34 to 37 instead of 34 to 38.</p>
+</div>
+<div id="identify-positions-of-shrnas-that-are-predictive-of-stability-changes-fishers-exact-test" class="section level1" number="10">
+<h1><span class="header-section-number">10</span> Identify positions of shRNAs that are predictive of stability changes (Fisher’s exact test)</h1>
+<p>Using a Fisher’s test to determine for each position, if there are more significant associations (FDR &lt; 0.05) that we would expect by chance. Repeat separately for the coefficients of 6-mers and 7-mers. Then in the regression to correct stability estimates, only use the 6-mers and 7-mers of these positions.</p>
 <pre class="r"><code>sessionInfo()</code></pre>
 <pre><code>## R version 4.4.1 (2024-06-14)
 ## Platform: x86_64-apple-darwin20

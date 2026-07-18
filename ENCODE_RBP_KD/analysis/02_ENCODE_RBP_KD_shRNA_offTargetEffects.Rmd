@@ -197,6 +197,8 @@ for(len in c(6, 7)) {
   }
 }
 
+saveRDS(regression_results, here("ENCODE_RBP_KD", "output", "rds", "regression_results.rds"))
+
 ```
 
 # Visualize the shRNA positions most strongly associated with mRNA stability
@@ -261,6 +263,7 @@ Using a Fisher's test to determine for each position, if there are more signific
 
 ```{r, eval = F}
 
+<==
 wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
 setwd(wd)
 
