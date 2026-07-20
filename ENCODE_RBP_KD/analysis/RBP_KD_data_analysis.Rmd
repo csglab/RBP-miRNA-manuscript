@@ -1,0 +1,838 @@
+---
+title: "mRNA stability in RBP KD data"
+author: "Gabrielle Perron"
+date: "January 13th, 2017"
+output:
+  pdf_document:
+    highlight: haddock
+  html_document:
+    highlight: haddock
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Regression for 6-mers only
+
+```{r, eval = F}
+
+library(Biostrings)
+library(stringr)
+library(seqRFLP)
+
+wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+# Load RNAi sequences file
+RNAi_seqs <- read.table("RNAi_sequences.txt", header = T)
+
+## Format the Experiment accession
+RNAi_seqs$Experiment <- gsub("/experiments/", "", RNAi_seqs$Experiment)
+RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
+
+## Format the RNAi sequence
+RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
+
+# Load 3'UTR sequences
+UTR_seq <- as.character(readDNAStringSet("/Users/gabrielleperron/Documents/feature_tables/3UTR_seq.fa"))
+names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
+
+# Trim first 2000bps of each 3'UTRs
+UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
+
+# Load bias-corrected stability estimates
+  
+stab_HepG2 <- read.table("residuals_ddf_dfi_batches_HepG2_ROBUST.txt", header=TRUE, row.names=1)
+stab_K562 <- read.table("residuals_ddf_dfi_batches_K562_ROBUST.txt", header=TRUE, row.names=1)
+
+# Filter stab and UTR seq tables to keep same genes in same order
+common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
+common_genes_K562 <- intersect(row.names(stab_K562), names(UTR_seq))
+
+UTR_HepG2_fltr <- UTR_seq[common_genes_HepG2]
+stab_HepG2_fltr <- stab_HepG2[common_genes_HepG2, ]
+
+UTR_K562_fltr <- UTR_seq[common_genes_K562]
+stab_K562_fltr <- stab_K562[common_genes_K562, ]
+
+# Create a corrected stability table
+corr_stab_HepG2 <- stab_HepG2_fltr
+corr_stab_HepG2[] <- NA
+
+corr_stab_K562 <- stab_K562_fltr
+corr_stab_K562[] <- NA
+
+# For each sample, get bias-corrected stab and Use a 6nt-length sliding window to get all 6nt sequences in the shRNA and count their occurence in the 3'UTRs
+
+for (cell in c("HepG2", "K562"))
+{
+  # Define UTR seq set
+  UTRs <- get(paste("UTR_", cell, "_fltr", sep=""))
+  
+  # Define stab set
+  stab <- get(paste("stab_", cell, "_fltr", sep=""))
+
+  # Define corrected stab table
+  corr_stab <- get(paste("corr_stab_", cell, sep=""))
+  
+  # For each sample
+  for (i in 1:ncol(stab))
+  {
+    print(i)
+    # Define the experiment
+    experiment <- gsub("_.*","", colnames(stab)[i])
+    
+    # If the experiment is not in the RNAi seq table, put stab as NA and remove after this part
+    if (!(experiment %in% RNAi_seqs$Experiment))
+    {
+      corr_stab[,i] <- NA
+      assign(paste("corr_stab_", cell, sep=""), corr_stab)
+      next
+      print("Experiment not found in the RNAi seq table")
+    }
+    
+    # Define the shRNA sequence
+    shRNA <- RNAi_seqs[RNAi_seqs$Experiment == experiment, ]$RNAi_sequence
+    
+    # Use a 6nt-length sliding window to get all 6nt sequences in the shRNAs
+    k <- 6
+    n <- nchar(shRNA)
+    mers <- substring(shRNA, 1:(n-k+1), k:n)
+    
+    # Reverse complement to get target sequences
+    mers <- unlist(lapply(mers, revComp))
+    
+    # Make a table with the genes as rows and the 6nts as columns
+    mers_counts <- as.data.frame(matrix(NA, ncol = length(mers), nrow=nrow(stab)))
+    row.names(mers_counts) <- row.names(stab)
+    colnames(mers_counts) <- mers
+    
+    # Fill the table with counts of each 6nt in the 3'UTR sequences for each gene
+    for (g in 1:nrow(mers_counts))
+    {
+      UTR <- UTRs[row.names(mers_counts)[g]]
+      for (mer in colnames(mers_counts))
+      {
+        mers_counts[g, mer] <- str_count(UTR, mer)
+      }
+    }
+    
+    # Delete columns with same 6nt sequence, but record their position and 6mer first
+    del_cols <- which(duplicated(colnames(mers_counts)))
+    del_cols_mers <- colnames(mers_counts)[duplicated(colnames(mers_counts))]
+    mers_counts_2 <- mers_counts[, !(duplicated(colnames(mers_counts)))]
+    
+    # Save the table
+    write.csv(mers_counts_2, file=paste(experiment, "_shRNA_6nts_counts.csv", sep=""))
+    
+    # Throw error if there are columns with all 0s
+    # del_cols <- sort(c(del_cols, which(colSums(mers_counts_2) == 0)))
+    # mers_counts_2 <- mers_counts_2[, colSums(mers_counts_2) > 0]
+    if (sum(colSums(mers_counts_2) == 0) > 0)
+    {
+      print("ERROR: Some 6mers don't occur in some UTR(s)")
+      break
+    }
+    
+    # Perform glm on sample stab data using this as predictor
+    fit <- glm(stab[, i] ~ data.matrix(mers_counts_2), na.action=na.exclude)
+    
+    # Put the residuals in their table, same for coeffs and pvals
+    corr_stab[,i] <- residuals(fit)
+    assign(paste("corr_stab_", cell, sep=""), corr_stab)
+    
+    coeffs <- as.data.frame(coef(fit)[-1])
+    row.names(coeffs) <- gsub(".*)", "", row.names(coeffs))
+    pvals <- as.data.frame(coef(summary(fit))[,4][-1])
+    row.names(pvals) <- gsub(".*)", "", row.names(pvals))
+    
+    # Put back 6mers that were deleted, for coeffs and pvals
+    coeffs_complete <- cbind(row.names(coeffs), coeffs[,1])
+    coeffs_complete_names <- row.names(coeffs)
+    
+    pvals_complete <- cbind(row.names(pvals), pvals[,1])
+    pvals_complete_names <- row.names(pvals)
+    
+    if (length(del_cols) > 0)
+    {
+      for (x in 1:length(del_cols))
+      {
+        coeffs_complete_names <- c(coeffs_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], coeffs_complete_names[(del_cols[x]):length(coeffs_complete_names)])
+        coeffs_complete <- rbind(coeffs_complete[1:(del_cols[x]-1), ], coeffs_complete[coeffs_complete[,1] == del_cols_mers[x], ], coeffs_complete[(del_cols[x]):nrow(coeffs_complete), ])
+      }
+      
+      for (x in 1:length(del_cols))
+      {
+        pvals_complete_names <- c(pvals_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], pvals_complete_names[(del_cols[x]):length(pvals_complete_names)])
+        pvals_complete <- rbind(pvals_complete[1:(del_cols[x]-1), ], pvals_complete[pvals_complete[,1] == del_cols_mers[x], ], pvals_complete[(del_cols[x]):nrow(pvals_complete), ])
+      }      
+    }
+    
+    # Save the coeffs and pvals
+    write.csv(coeffs_complete, file=paste(colnames(stab)[i], "_regressionCorrectionStabShRNA6nts_coeffs.csv", sep=""))
+    write.csv(pvals_complete, file=paste(colnames(stab)[i], "_regressionCorrectionStabShRNA6nts_pvals.csv", sep=""))
+  }
+}
+
+# Remove samples with all NAs as corrected stability (RNAi sequence not available)
+corr_stab_HepG2 <- corr_stab_HepG2[ , colSums(is.na(corr_stab_HepG2)) < nrow(corr_stab_HepG2)]
+corr_stab_K562 <- corr_stab_K562[ , colSums(is.na(corr_stab_K562)) < nrow(corr_stab_K562)]
+  
+# Save corrected stab tables
+# write.csv(corr_stab_HepG2, file = "RBPKD_stab_biasCorr_corrShRNA6nts_HepG2.csv")
+# write.csv(corr_stab_K562, file = "RBPKD_stab_biasCorr_corrShRNA6nts_K562.csv")
+
+```
+
+### Regression for 7-mers only
+
+```{r, eval = F}
+
+library(Biostrings)
+library(stringr)
+library(seqRFLP)
+
+wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+# Load RNAi sequences file
+RNAi_seqs <- read.table("RNAi_sequences.txt", header = T)
+
+## Format the Experiment accession
+RNAi_seqs$Experiment <- gsub("/experiments/", "", RNAi_seqs$Experiment)
+RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
+
+## Format the RNAi sequence
+RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
+
+# Load 3'UTR sequences
+UTR_seq <- as.character(readDNAStringSet("/Users/gabrielleperron/Documents/feature_tables/3UTR_seq.fa"))
+names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
+
+# Trim first 2000bps of each 3'UTRs
+UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
+
+# Load bias-corrected stability estimates
+  
+stab_HepG2 <- read.table("residuals_ddf_dfi_batches_HepG2_ROBUST.txt", header=TRUE, row.names=1)
+stab_K562 <- read.table("residuals_ddf_dfi_batches_K562_ROBUST.txt", header=TRUE, row.names=1)
+
+# Filter stab and UTR seq tables to keep same genes in same order
+common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
+common_genes_K562 <- intersect(row.names(stab_K562), names(UTR_seq))
+
+UTR_HepG2_fltr <- UTR_seq[common_genes_HepG2]
+stab_HepG2_fltr <- stab_HepG2[common_genes_HepG2, ]
+
+UTR_K562_fltr <- UTR_seq[common_genes_K562]
+stab_K562_fltr <- stab_K562[common_genes_K562, ]
+
+# Create a corrected stability table
+corr_stab_HepG2 <- stab_HepG2_fltr
+corr_stab_HepG2[] <- NA
+
+corr_stab_K562 <- stab_K562_fltr
+corr_stab_K562[] <- NA
+
+# For each sample, get bias-corrected stab and Use a 7nt-length sliding window to get all 7nt sequences in the shRNA and count their occurence in the 3'UTRs
+
+for (cell in c("HepG2", "K562"))
+{
+  # Define UTR seq set
+  UTRs <- get(paste("UTR_", cell, "_fltr", sep=""))
+  
+  # Define stab set
+  stab <- get(paste("stab_", cell, "_fltr", sep=""))
+
+  # Define corrected stab table
+  corr_stab <- get(paste("corr_stab_", cell, sep=""))
+  
+  # For each sample
+  for (i in 1:ncol(stab))
+  {
+    print(i)
+    # Define the experiment
+    experiment <- gsub("_.*","", colnames(stab)[i])
+    
+    # If the experiment is not in the RNAi seq table, put stab as NA and remove after this part
+    if (!(experiment %in% RNAi_seqs$Experiment))
+    {
+      corr_stab[,i] <- NA
+      assign(paste("corr_stab_", cell, sep=""), corr_stab)
+      next
+      print("Experiment not found in the RNAi seq table")
+    }
+    
+    # Define the shRNA sequence
+    shRNA <- RNAi_seqs[RNAi_seqs$Experiment == experiment, ]$RNAi_sequence
+    
+    # Use a 7nt-length sliding window to get all 7nt sequences in the shRNAs
+    k <- 7
+    n <- nchar(shRNA)
+    mers <- substring(shRNA, 1:(n-k+1), k:n)
+    
+    # Reverse complement to get target sequences
+    mers <- unlist(lapply(mers, revComp))
+    
+    # Make a table with the genes as rows and the 7nts as columns
+    mers_counts <- as.data.frame(matrix(NA, ncol = length(mers), nrow=nrow(stab)))
+    row.names(mers_counts) <- row.names(stab)
+    colnames(mers_counts) <- mers
+    
+    # Fill the table with counts of each 7nt in the 3'UTR sequences for each gene
+    for (g in 1:nrow(mers_counts))
+    {
+      UTR <- UTRs[row.names(mers_counts)[g]]
+      for (mer in colnames(mers_counts))
+      {
+        mers_counts[g, mer] <- str_count(UTR, mer)
+      }
+    }
+    
+    # Delete columns with same 7nt sequence, but record their position and 6mer first
+    del_cols <- which(duplicated(colnames(mers_counts)))
+    del_cols_mers <- colnames(mers_counts)[duplicated(colnames(mers_counts))]
+    mers_counts_2 <- mers_counts[, !(duplicated(colnames(mers_counts)))]
+    
+    # Save the table
+    write.csv(mers_counts_2, file=paste(experiment, "_shRNA_7nts_counts.csv", sep=""))
+    
+    # Throw error if there are columns with all 0s
+    # del_cols <- sort(c(del_cols, which(colSums(mers_counts_2) == 0)))
+    # mers_counts_2 <- mers_counts_2[, colSums(mers_counts_2) > 0]
+    if (sum(colSums(mers_counts_2) == 0) > 0)
+    {
+      print("ERROR: Some 6mers don't occur in some UTR(s)")
+      break
+    }
+    
+    # Perform glm on sample stab data using this as predictor
+    fit <- glm(stab[, i] ~ data.matrix(mers_counts_2), na.action=na.exclude)
+    
+    # Put the residuals in their table, same for coeffs and pvals
+    corr_stab[,i] <- residuals(fit)
+    assign(paste("corr_stab_", cell, sep=""), corr_stab)
+    
+    coeffs <- as.data.frame(coef(fit)[-1])
+    row.names(coeffs) <- gsub(".*)", "", row.names(coeffs))
+    pvals <- as.data.frame(coef(summary(fit))[,4][-1])
+    row.names(pvals) <- gsub(".*)", "", row.names(pvals))
+    
+    # Put back 6mers that were deleted, for coeffs and pvals
+    coeffs_complete <- cbind(row.names(coeffs), coeffs[,1])
+    coeffs_complete_names <- row.names(coeffs)
+    
+    pvals_complete <- cbind(row.names(pvals), pvals[,1])
+    pvals_complete_names <- row.names(pvals)
+    
+    if (length(del_cols) > 0)
+    {
+      for (x in 1:length(del_cols))
+      {
+        coeffs_complete_names <- c(coeffs_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], coeffs_complete_names[(del_cols[x]):length(coeffs_complete_names)])
+        coeffs_complete <- rbind(coeffs_complete[1:(del_cols[x]-1), ], coeffs_complete[coeffs_complete[,1] == del_cols_mers[x], ], coeffs_complete[(del_cols[x]):nrow(coeffs_complete), ])
+      }
+      
+      for (x in 1:length(del_cols))
+      {
+        pvals_complete_names <- c(pvals_complete_names[1:(del_cols[x]-1)], del_cols_mers[x], pvals_complete_names[(del_cols[x]):length(pvals_complete_names)])
+        pvals_complete <- rbind(pvals_complete[1:(del_cols[x]-1), ], pvals_complete[pvals_complete[,1] == del_cols_mers[x], ], pvals_complete[(del_cols[x]):nrow(pvals_complete), ])
+      }      
+    }
+    
+    # Save the coeffs and pvals
+    write.csv(coeffs_complete, file=paste(colnames(stab)[i], "_regressionCorrectionStabShRNA7nts_coeffs.csv", sep=""))
+    write.csv(pvals_complete, file=paste(colnames(stab)[i], "_regressionCorrectionStabShRNA7nts_pvals.csv", sep=""))
+  }
+}
+
+# Remove samples with all NAs as corrected stability (RNAi sequence not available)
+corr_stab_HepG2 <- corr_stab_HepG2[ , colSums(is.na(corr_stab_HepG2)) < nrow(corr_stab_HepG2)]
+corr_stab_K562 <- corr_stab_K562[ , colSums(is.na(corr_stab_K562)) < nrow(corr_stab_K562)]
+  
+# Save corrected stab tables
+# write.csv(corr_stab_HepG2, file = "RBPKD_stab_biasCorr_corrShRNA7nts_HepG2.csv")
+# write.csv(corr_stab_K562, file = "RBPKD_stab_biasCorr_corrShRNA7nts_K562.csv")
+
+```
+
+### Checking the positions of shRNAs most predictive of mRNA stability
+
+Heatmap with all samples as rows and shRNA position as column, fill with the regression coefficients from the 6nt correction above
+
+#### For 6mers
+
+```{r, eval = F}
+
+library(data.table)
+library(gplots)
+
+wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+# Load all coeff vectors for all samples
+
+coeff_files <- list.files(wd, pattern = "regressionCorrectionStabShRNA6nts_coeffs", full.names = T)
+coeff_data <- lapply(coeff_files, fread, header=T)
+coeff_data <- lapply(coeff_data, function(x) as.vector(as.data.frame(x)[,3]))
+table(unlist(lapply(coeff_data, length)))
+max_len <- as.numeric(max(names(table(unlist(lapply(coeff_data, length))))))
+
+# Max shRNA length is 54, some are shorter, so fill the coeff vectors with NAs so that all have length 54
+
+for (i in 1:length(coeff_data))
+{
+  init_len <- length(coeff_data[[i]])
+  nb_missing <- max_len - init_len
+  coeff_data[[i]] <- c(coeff_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(coeff_data, length)))
+  
+# Make a result matrix with ncol = max ncol from the coeff files 
+res <- do.call("rbind", coeff_data)
+sample_names <- gsub(wd, "", coeff_files)
+sample_names <- gsub("/", "", sample_names)
+sample_names <- gsub("_regressionCorrectionStabShRNA6nts_coeffs.csv", "", sample_names)
+row.names(res) <- sample_names
+colnames(res) <- c(1:max_len)
+  
+# Replace NAs with 0s
+res[is.na(res)] <- 0
+  
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position6ntsPredStab.pdf", height = 2, width = 7)
+heatmap.2(res, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-0.1,0.1,length.out=200), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+
+################# Testing same for signed log10 pvals ###################
+
+coeffs <- res
+
+# Load all coeff vectors for all samples
+
+pval_files <- list.files(wd, pattern = "regressionCorrectionStabShRNA6nts_pvals", full.names = T)
+pval_data <- lapply(pval_files, fread, header=T)
+pval_data <- lapply(pval_data, function(x) as.vector(as.data.frame(x)[,3]))
+table(unlist(lapply(pval_data, length)))
+max_len <- as.numeric(max(names(table(unlist(lapply(pval_data, length))))))
+
+# Max shRNA length is 54, some are shorter, so fill the pval vectors with NAs so that all have length 54
+
+for (i in 1:length(pval_data))
+{
+  init_len <- length(pval_data[[i]])
+  nb_missing <- max_len - init_len
+  pval_data[[i]] <- c(pval_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pval_data, length)))
+  
+# Make a result matrix with ncol = max ncol from the pval files 
+res <- do.call("rbind", pval_data)
+sample_names <- gsub(wd, "", pval_files)
+sample_names <- gsub("/", "", sample_names)
+sample_names <- gsub("_regressionCorrectionStabShRNA6nts_pvals.csv", "", sample_names)
+row.names(res) <- sample_names
+colnames(res) <- c(1:max_len)
+
+# Transformed to signed log10
+signs <- sign(coeffs)
+head(signs[,1:5])
+slog10pvals <- abs(log10(res))*signs
+head(slog10pvals[,1:5])
+  
+# Replace NAs with 0s
+slog10pvals[is.na(slog10pvals)] <- 0
+  
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position6ntsPredStab_signedlog10pvals.pdf", height = 2, width = 7)
+heatmap.2(slog10pvals, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-10,10,length.out=100), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+
+################# Testing same for signed log10 FDR-corrected pvals ###################
+
+# FDR correction
+pvals_vector <- c(res)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(res), ncol = ncol(res))
+
+# Transformed to signed log10
+slog10FDR <- abs(log10(FDR))*signs
+  
+# Replace NAs with 0s
+slog10FDR[is.na(slog10FDR)] <- 0
+
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position6ntsPredStab_signedlog10FDR.pdf", height = 2, width = 7)
+heatmap.2(slog10FDR, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-10,10,length.out=100), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+```
+
+See that nt postitions 34-38 on shRNA is associated with decreased mRNA stability
+
+#### For 7mers
+
+```{r, eval = F}
+
+library(data.table)
+library(gplots)
+
+wd = "/Users/gperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+# Load all coeff vectors for all samples
+
+coeff_files <- list.files(wd, pattern = "regressionCorrectionStabShRNA7nts_coeffs", full.names = T)
+coeff_data <- lapply(coeff_files, fread, header=T)
+coeff_data <- lapply(coeff_data, function(x) as.vector(as.data.frame(x)[,3]))
+table(unlist(lapply(coeff_data, length)))
+max_len <- as.numeric(max(names(table(unlist(lapply(coeff_data, length))))))
+
+# Max shRNA length is 54, some are shorter, so fill the coeff vectors with NAs so that all have length 54
+
+for (i in 1:length(coeff_data))
+{
+  init_len <- length(coeff_data[[i]])
+  nb_missing <- max_len - init_len
+  coeff_data[[i]] <- c(coeff_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(coeff_data, length)))
+  
+# Make a result matrix with ncol = max ncol from the coeff files 
+res <- do.call("rbind", coeff_data)
+sample_names <- gsub(wd, "", coeff_files)
+sample_names <- gsub("/", "", sample_names)
+sample_names <- gsub("_regressionCorrectionStabShRNA7nts_coeffs.csv", "", sample_names)
+row.names(res) <- sample_names
+colnames(res) <- c(1:max_len)
+  
+# Replace NAs with 0s
+res[is.na(res)] <- 0
+  
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position7ntsPredStab.pdf", height = 2, width = 7)
+heatmap.2(res, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-0.1,0.1,length.out=200), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+
+################# Testing same for signed log10 pvals ###################
+
+coeffs <- res
+
+# Load all coeff vectors for all samples
+
+pval_files <- list.files(wd, pattern = "regressionCorrectionStabShRNA7nts_pvals", full.names = T)
+pval_data <- lapply(pval_files, fread, header=T)
+pval_data <- lapply(pval_data, function(x) as.vector(as.data.frame(x)[,3]))
+table(unlist(lapply(pval_data, length)))
+max_len <- as.numeric(max(names(table(unlist(lapply(pval_data, length))))))
+
+# Max shRNA length is 54, some are shorter, so fill the pval vectors with NAs so that all have length 54
+
+for (i in 1:length(pval_data))
+{
+  init_len <- length(pval_data[[i]])
+  nb_missing <- max_len - init_len
+  pval_data[[i]] <- c(pval_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pval_data, length)))
+  
+# Make a result matrix with ncol = max ncol from the pval files 
+res <- do.call("rbind", pval_data)
+sample_names <- gsub(wd, "", pval_files)
+sample_names <- gsub("/", "", sample_names)
+sample_names <- gsub("_regressionCorrectionStabShRNA7nts_pvals.csv", "", sample_names)
+row.names(res) <- sample_names
+colnames(res) <- c(1:max_len)
+
+# Transformed to signed log10
+signs <- sign(coeffs)
+head(signs[,1:5])
+slog10pvals <- abs(log10(res))*signs
+head(slog10pvals[,1:5])
+  
+# Replace NAs with 0s
+slog10pvals[is.na(slog10pvals)] <- 0
+  
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position7ntsPredStab_signedlog10pvals.pdf", height = 2, width = 7)
+heatmap.2(slog10pvals, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-10,10,length.out=100), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+
+################# Testing same for signed log10 FDR-corrected pvals ###################
+
+# FDR correction
+pvals_vector <- c(res)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(res), ncol = ncol(res))
+
+# Transformed to signed log10
+slog10FDR <- abs(log10(FDR))*signs
+  
+# Replace NAs with 0s
+slog10FDR[is.na(slog10FDR)] <- 0
+
+# Make a heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("ENCODE_RBPKD_samples_shRNA_position7ntsPredStab_signedlog10FDR.pdf", height = 2, width = 7)
+heatmap.2(slog10FDR, trace="none", col=palette, cexRow=0.001, cexCol=0.5,  breaks=seq(-10,10,length.out=100), mar=c(2,2), keysize=0.5, Colv = F, 
+          hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), density.info = "none", key.par = list(cex=3), lwid = c(1,10))
+dev.off()
+
+```
+
+So the same heatmap made instead with stability estimates corrected for the shRNA 7mers looks like this (attached). It is very similar, except that the region that seems to mediate the off-target effets is from position 34 to 37 instead of 34 to 38.
+
+### Correction of stability estimates, using 6mers and 7mers from positions associated with off-target effects
+
+Using a Fisher's test to determine for each position, if there are more significant associations (FDR < 0.05) that we would expect by chance. Repeat separatelly for the coefficients of 6mers and 7mers. Then in the regression to correct stability estimates, only use the 6mers and 7mers of these positions.
+
+
+```{r, eval = F}
+
+wd = "/Users/gabrielleperron/Documents/R_workdir_ENCODE"
+setwd(wd)
+
+############## 6 mers sig positions ################
+
+# Load p-values from above regression
+pvals_files <- list.files(path = wd, pattern = "_regressionCorrectionStabShRNA6nts_pvals.csv", full.names = T)
+pvals_data <- lapply(pvals_files, fread)
+head(pvals_data[[1]])
+dim(pvals_data[[1]])
+pvals_data <- lapply(pvals_data, function(x) as.vector(as.data.frame(x)[,3]))
+head(pvals_data[[1]])
+
+
+# Fill in the vectors so that they have equal lengths (add NAs)
+max_len <- as.numeric(max(names(table(unlist(lapply(pvals_data, length))))))
+for (i in 1:length(pvals_data))
+{
+  init_len <- length(pvals_data[[i]])
+  nb_missing <- max_len - init_len
+  pvals_data[[i]] <- c(pvals_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pvals_data, length)))
+
+# Bind pvalue vectors from each sample in a matrix
+pvals <- do.call(rbind, pvals_data)
+head(pvals[,1:5])
+dim(pvals)
+
+# FDR correction
+pvals_vector <- c(pvals)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(pvals), ncol = ncol(pvals))
+head(FDR[,1:5])
+
+# Replace sig adjusted pvals with 1, rest with 0
+FDR_bin <- FDR
+FDR_bin[FDR_bin < 0.5] <- 1
+FDR_bin[FDR >= 0.5] <- 0
+FDR_bin[is.na(FDR)] <- 0
+head(FDR_bin[,1:5])
+
+# For each position, check if there are more 1s than expect by chance using a Fisher's test
+fisher_pval <- rep(NA, max_len)
+fisher_or <- rep(NA, max_len)
+for(x in 1:max_len)
+{
+  nb_sig_posX <- sum(FDR_bin[, x] == 1, na.rm = T)
+  nb_sig_otherPos <- sum(FDR_bin[, -(x)] == 1, na.rm = T)
+  nb_NS_posX <- sum(FDR_bin[, x] == 0, na.rm = T)
+  nb_NS_otherPos <- sum(FDR_bin[, -(x)] == 0, na.rm = T)
+  cont_tbl <- cbind(c(nb_sig_posX, nb_sig_otherPos), c(nb_NS_posX, nb_NS_otherPos))
+  fisher_pval[x] <- fisher.test(cont_tbl)$p.value
+  fisher_or[x] <- fisher.test(cont_tbl)$estimate
+}
+
+# Check positions that have significantly MORE hits than expected by random
+sig_pos_6mers <- which(fisher_pval < 0.05 & fisher_or > 1)
+
+
+############## 7 mers sig positions ################
+
+# Load p-values from above regression
+pvals_files <- list.files(path = wd, pattern = "_regressionCorrectionStabShRNA7nts_pvals.csv", full.names = T)
+pvals_data <- lapply(pvals_files, fread)
+head(pvals_data[[1]])
+dim(pvals_data[[1]])
+pvals_data <- lapply(pvals_data, function(x) as.vector(as.data.frame(x)[,3]))
+head(pvals_data[[1]])
+
+# Fill in the vectors so that they have equal lengths (add NAs)
+max_len <- as.numeric(max(names(table(unlist(lapply(pvals_data, length))))))
+for (i in 1:length(pvals_data))
+{
+  init_len <- length(pvals_data[[i]])
+  nb_missing <- max_len - init_len
+  pvals_data[[i]] <- c(pvals_data[[i]], rep(NA, nb_missing))
+}
+table(unlist(lapply(pvals_data, length)))
+
+# Bind pvalue vectors from each sample in a matrix
+pvals <- do.call(rbind, pvals_data)
+head(pvals[,1:5])
+dim(pvals)
+
+# FDR correction
+pvals_vector <- c(pvals)
+pvals_vector_FDR <- p.adjust(pvals_vector, method="fdr")
+FDR <- matrix(pvals_vector_FDR, nrow = nrow(pvals), ncol = ncol(pvals))
+head(FDR[,1:5])
+
+# Replace sig adjusted pvals with 1, rest with 0
+FDR_bin <- FDR
+FDR_bin[FDR_bin < 0.5] <- 1
+FDR_bin[FDR >= 0.5] <- 0
+FDR_bin[is.na(FDR)] <- 0
+head(FDR_bin[,1:5])
+
+# For each position, check if there are more 1s than expect by chance using a Fisher's test
+fisher_pval <- rep(NA, max_len)
+fisher_or <- rep(NA, max_len)
+for(x in 1:max_len)
+{
+  nb_sig_posX <- sum(FDR_bin[, x] == 1, na.rm = T)
+  nb_sig_otherPos <- sum(FDR_bin[, -(x)] == 1, na.rm = T)
+  nb_NS_posX <- sum(FDR_bin[, x] == 0, na.rm = T)
+  nb_NS_otherPos <- sum(FDR_bin[, -(x)] == 0, na.rm = T)
+  cont_tbl <- cbind(c(nb_sig_posX, nb_sig_otherPos), c(nb_NS_posX, nb_NS_otherPos))
+  fisher_pval[x] <- fisher.test(cont_tbl)$p.value
+  fisher_or[x] <- fisher.test(cont_tbl)$estimate
+}
+
+# Check positions that have significantly MORE hits than expected by random
+sig_pos_7mers <- which(fisher_pval < 0.05 & fisher_or > 1)
+
+
+############## Stability correction ################
+
+library(Biostrings)
+library(stringr)
+library(seqRFLP)
+
+# Load RNAi sequences file
+RNAi_seqs <- read.table("RNAi_sequences.txt", header = T)
+
+## Format the Experiment accession
+RNAi_seqs$Experiment <- gsub("/experiments/", "", RNAi_seqs$Experiment)
+RNAi_seqs$Experiment <- gsub("/", "", RNAi_seqs$Experiment)
+
+## Format the RNAi sequence
+RNAi_seqs$RNAi_sequence <- gsub("-", "", RNAi_seqs$RNAi_sequence)
+
+# Load 3'UTR sequences
+UTR_seq <- as.character(readDNAStringSet("/Users/gabrielleperron/Documents/feature_tables/3UTR_seq.fa"))
+names(UTR_seq) <- gsub(".*gene=", "", names(UTR_seq))
+
+# Trim first 2000bps of each 3'UTRs
+UTR_seq <- unlist(lapply(UTR_seq, function(x) substring(x, 1, 2000)))
+
+# Load bias-corrected stability estimates
+  
+stab_HepG2 <- read.table("residuals_ddf_dfi_batches_HepG2_ROBUST.txt", header=TRUE, row.names=1)
+stab_K562 <- read.table("residuals_ddf_dfi_batches_K562_ROBUST.txt", header=TRUE, row.names=1)
+
+# Filter stab and UTR seq tables to keep same genes in same order
+common_genes_HepG2 <- intersect(row.names(stab_HepG2), names(UTR_seq))
+common_genes_K562 <- intersect(row.names(stab_K562), names(UTR_seq))
+
+UTR_HepG2_fltr <- UTR_seq[common_genes_HepG2]
+stab_HepG2_fltr <- stab_HepG2[common_genes_HepG2, ]
+
+UTR_K562_fltr <- UTR_seq[common_genes_K562]
+stab_K562_fltr <- stab_K562[common_genes_K562, ]
+
+# Create a corrected stability table
+corr_stab_HepG2 <- stab_HepG2_fltr
+corr_stab_HepG2[] <- NA
+
+corr_stab_K562 <- stab_K562_fltr
+corr_stab_K562[] <- NA
+
+# For each sample, get bias-corrected stab and Use a 6nt-length sliding window to get all 6nt sequences in the shRNA and count their occurence in the 3'UTRs
+
+for (cell in c("HepG2", "K562"))
+{
+  # Define UTR seq set
+  UTRs <- get(paste("UTR_", cell, "_fltr", sep=""))
+  
+  # Define stab set
+  stab <- get(paste("stab_", cell, "_fltr", sep=""))
+
+  # Define corrected stab table
+  corr_stab <- get(paste("corr_stab_", cell, sep=""))
+  
+  # For each sample
+  for (i in 1:ncol(stab))
+  {
+    # Define the experiment
+    experiment <- gsub("_.*","", colnames(stab)[i])
+    
+    # If the experiment is not in the RNAi seq table, put stab as NA and remove after this part
+    if (!(experiment %in% RNAi_seqs$Experiment))
+    {
+      corr_stab[,i] <- NA
+      assign(paste("corr_stab_", cell, sep=""), corr_stab)
+      next
+      print("Experiment not found in the RNAi seq table")
+    }
+    
+    # Load the count tables for 6mers and 7mers
+    counts_6mers <- read.csv(paste(experiment, "_shRNA_6nts_counts.csv", sep=""), row.names=1)
+    counts_7mers <- read.csv(paste(experiment, "_shRNA_7nts_counts.csv", sep=""), row.names=1)
+    
+    # Filter for the sig positions, if they exist
+    counts_6mers <- counts_6mers[, which((1:ncol(counts_6mers)) %in% sig_pos_6mers)]
+    counts_7mers <- counts_7mers[, which((1:ncol(counts_7mers)) %in% sig_pos_7mers)]
+    
+    # Merge 6mers and 7mers tables
+    counts_mers <- cbind(counts_6mers, counts_7mers)
+
+    # Make sure that mer counts and stab tables have same genes in same order
+    if(all(row.names(counts_mers) != row.names(stab)))
+    {
+      print("ERROR: Different genes/order in stability and 6mer counts tables")
+      break
+    }
+    
+    # Perform glm on sample stab data using this as predictor
+    fit <- glm(stab[, i] ~ data.matrix(counts_mers), na.action=na.exclude)
+    
+    # Put the residuals in their table, same for coeffs and pvals
+    corr_stab[,i] <- residuals(fit)
+    assign(paste("corr_stab_", cell, sep=""), corr_stab)
+    
+    coeffs <- as.data.frame(coef(fit)[-1])
+    row.names(coeffs) <- gsub(".*)", "", row.names(coeffs))
+    pvals <- as.data.frame(coef(summary(fit))[,4][-1])
+    row.names(pvals) <- gsub(".*)", "", row.names(pvals))
+  }
+}
+
+# Remove samples with all NAs as corrected stability (RNAi sequence not available)
+corr_stab_HepG2 <- corr_stab_HepG2[ , colSums(is.na(corr_stab_HepG2)) < nrow(corr_stab_HepG2)]
+corr_stab_K562 <- corr_stab_K562[ , colSums(is.na(corr_stab_K562)) < nrow(corr_stab_K562)]
+  
+# Save corrected stab tables
+write.csv(corr_stab_HepG2, file = "RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_HepG2.csv")
+write.csv(corr_stab_K562, file = "RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_K562.csv")
+
+```
+
