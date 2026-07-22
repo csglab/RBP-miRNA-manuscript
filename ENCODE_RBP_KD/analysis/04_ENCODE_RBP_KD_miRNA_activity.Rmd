@@ -1,5 +1,5 @@
 ---
-title: 'miRNA activity in ENCODE RBP KD samples'
+title: 'Inferring miRNA activity in ENCODE RBP KD samples (with correction for shRNA off-target effects'
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
 output: 
@@ -15,7 +15,7 @@ library(here)
 set.seed(1)
 ```
 
-Load libraries
+# Load libraries
 
 ```{r}
 library(gplots)
@@ -25,122 +25,181 @@ library(scales)
 library(reshape2)
 library(ggplot2)
 library(here)
+library(tidyverse)
 ```
 
-Identifying candidate RBP-miRNA interactions
-  - Considered all original (from original method) significant hits (FDR < 0.05)
-  - Retrieved corresponding new p-values
-  - FDR correction on this subset of p-values
-  - Filtered for new significant hits (FDR < 0.05)
-  - Candidate interactions: Interactions corresponding to the significant hits where other replicates are in agreement in terms of direction of interaction
+# Summary of steps for identifying candidate RBP-miRNA interactions
 
-Load the differential mRNA stability after correction for bias, batches, and shRNA off-target effects
+  - Perform new inference of miRNA activity in RBP KD samples using stability data corrected for shRNA off-target effects
+  - Consider results of all original significant hits (candidate interactions, FDR < 0.05, from before correction of stability data for shRNA off-target effects)
+  - Retrieved corresponding new P-values
+  - FDR correction on this subset of P-values
+  - Filter for new significant hits (FDR < 0.05)
+  - Identify candidate RBP-miRNA interactions: New significant hits where the other replicates are in agreement in terms of direction of interaction (sign of regression coefficients)
+
+# Load the differential mRNA stability after correction for bias, batches, and shRNA off-target effects, 3'UTR nucleotide composition and length annotations, and miRNA binding network
 
 ```{r}
-corr_stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("ENCODE_RBP_KD_bias_batch_corrected_stability_", "HepG2", ".csv")), row.names=1)
-corr_stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", paste0("ENCODE_RBP_KD_bias_batch_corrected_stability_", "K562", ".csv")), row.names=1)
+stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_HepG2.csv"))
+stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_K562.csv"))
+
+UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length.txt"), header = TRUE, row.names = NULL)
+affinity_miRNAs <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_miRNA_affinity.txt"), header = TRUE, row.names = NULL)
 ```
 
-Load 3'UTR annotations
+# Prepare GLM data
+
+Merge 3'UTR annotations with stability data for each cell line
 
 ```{r}
-UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header=TRUE, row.names=1)
-UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header=TRUE, row.names=1)
+UTR <- merge(UTR_nt, UTR_length, by = 1)
+UTR_affinity <- merge(UTR, affinity_miRNAs, by = 1)
+
+glmMatrix_HepG2 <- merge(stab_HepG2, UTR_affinity, by = 1)
+glmMatrix_K562 <- merge(stab_K562, UTR_affinity, by = 1)
 ```
 
-Load miRNA-mRNA predicted binding matrix
+# Fit GLM models 
+
+Run GLM for each RBP KD sample, extracting coefficients and p-values
 
 ```{r}
-affinity_miRNAs <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header=TRUE, row.names=1)
-```
-
-Merge the stability data, UTR annotation and miRNA binding table based on gene IDs (separate merged tables for each cell line)
-
-```{r}
-common_genes_HepG2 <- Reduce(intersect, list(row.names(affinity_miRNAs), row.names(UTR_nt), row.names(UTR_length), row.names(corr_stab_HepG2)))
-glmMatrix_HepG2 <- cbind(common_genes_HepG2, corr_stab_HepG2[common_genes_HepG2, ], UTR_nt[common_genes_HepG2, ], UTR_length[common_genes_HepG2, ], affinity_miRNAs[common_genes_HepG2, ])
-
-common_genes_K562 <- Reduce(intersect, list(row.names(affinity_miRNAs), row.names(UTR_nt), row.names(UTR_length), row.names(corr_stab_K562)))
-glmMatrix_K562 <- cbind(common_genes_K562, corr_stab_K562[common_genes_K562, ], UTR_nt[common_genes_K562, ], UTR_length[common_genes_K562, ], affinity_miRNAs[common_genes_K562, ])
-```
-
-Initialize matrices where the coefficents and p-values from the glm will be stored.
-
-```{r}
-pval_HepG2 <- matrix(NA, nrow=ncol(corr_stab_HepG2), ncol=ncol(glmMatrix_HepG2)-ncol(corr_stab_HepG2)-1)
-rownames(pval_HepG2) = colnames(corr_stab_HepG2)
-colnames(pval_HepG2) = colnames(glmMatrix_HepG2)[(ncol(corr_stab_HepG2)+2):ncol(glmMatrix_HepG2)]
-
-pval_K562 <- matrix(NA, nrow=ncol(corr_stab_K562), ncol=ncol(glmMatrix_K562)-ncol(corr_stab_K562)-1)
-rownames(pval_K562) = colnames(corr_stab_K562)
-colnames(pval_K562) = colnames(glmMatrix_K562)[(ncol(corr_stab_K562)+2):ncol(glmMatrix_K562)]
-
-coeff_HepG2 <- pval_HepG2
-coeff_K562 <- pval_K562
-```
-
-Infer miRNA activity using a glm with the stability data as the response, and as the predictors: 3'UTR_length, 3'UTR nucleotide and dinucleotide composition, and miRNA binding.
-
-```{r}
-for (i in seq_len(ncol(corr_stab_HepG2))[-1])
-{
-  fit_HepG2 <- glm(data.matrix(glmMatrix_HepG2[,i]) ~ data.matrix(glmMatrix_HepG2[,(ncol(corr_stab_HepG2)+2):ncol(glmMatrix_HepG2)]), na.action=na.exclude)
-  pval_HepG2[i-1,] <- as.vector(coef(summary(fit_HepG2))[,4])[-1]
-  coeff_HepG2[i-1,] <- as.vector(coef(summary(fit_HepG2))[,1])[-1]
-}
+fit_glm_sample <- function(glm_data, sample_name, cell_line) {
+  # glm_data: complete data frame with response and all predictors
+  # sample_name: name of the RBP KD sample 
+  # cell_line: "HepG2" or "K562"
   
-for (i in seq_len(ncol(corr_stab_K562))[-1])
-{
-  fit_K562 <- glm(data.matrix(glmMatrix_K562[,i]) ~ data.matrix(glmMatrix_K562[,(ncol(corr_stab_K562)+2):ncol(glmMatrix_K562)]), na.action=na.exclude)
-  pval_K562[i-1,] <- as.vector(coef(summary(fit_K562))[,4])[-1]
-  coeff_K562[i-1,] <- as.vector(coef(summary(fit_K562))[,1])[-1]
+  n_cols <- ncol(glm_data)
+  response_col <- which(colnames(glm_data) == sample_name)
+  
+  # Formula: response ~ confounders & predictors
+  # Intercept included automatically
+  formula_str <- paste0(
+    colnames(glm_data)[response_col], 
+    " ~ ",
+    paste(colnames(glm_data)[predictors_confounders_cols], collapse = " + ")
+  )
+  
+  fit <- glm(as.formula(formula_str), data = glm_data, na.action = na.exclude)
+  coef_summary <- coef(summary(fit))
+  
+  # Extract coefficients and p-values for predictors only (miRNA cols, skip intercept and confounders)
+  predictor_rows <- which(grepl("miR\\.|let\\.", row.names(coef_summary)))
+  
+  tibble(
+    miRNA = rownames(coef_summary)[predictor_rows],
+    coefficient = coef_summary[predictor_rows, 1],
+    pvalue = coef_summary[predictor_rows, 4],
+    sample_name = sample_name,
+    cell_line = cell_line
+  )
 }
+
+# Apply to all RBP KD samples in both cell lines
+rbp_sample_names_hepg2 <- colnames(stab_HepG2)[-1]
+rbp_sample_names_k562 <- colnames(stab_K562)[-1]
+
+results_HepG2 <- map_df(rbp_sample_names_hepg2, 
+                         ~fit_glm_sample(glmMatrix_HepG2, .x, "HepG2"))
+results_K562 <- map_df(rbp_sample_names_k562, 
+                        ~fit_glm_sample(glmMatrix_K562, .x, "K562"))
+
+# Combine results from both cell lines
+glm_results <- bind_rows(results_HepG2, results_K562) |>
+  mutate(
+    # Switch signs so coefficients represent miRNA activity (not target stability)
+    coefficient = -coefficient,
+    # Convert from ln to log2 scale
+    coefficient_log2 = log2(exp(coefficient))
+  )
+
+head(glm_results)
 ```
 
-Remove 3'UTR length and nucleotide composition from the coefficients and p-values 
+# Multiple testing correction (separately for each cell line)
 
 ```{r}
-pval_HepG2 <- pval_HepG2[, 22:ncol(pval_HepG2)]
-pval_K562 <- pval_K562[, 22:ncol(pval_K562)]
-coeff_HepG2 <- coeff_HepG2[, 22:ncol(coeff_HepG2)]
-coeff_K562 <- coeff_K562[, 22:ncol(coeff_K562)]
+glm_results <- glm_results |>
+  group_by(cell_line) |>
+  mutate(FDR = p.adjust(pvalue, method = "fdr")) |>
+  ungroup()
 ```
 
-FDR correction
+# Reformat miRNA names
 
 ```{r}
-pval_HepG2_vector <- c(pval_HepG2)
-pval_HepG2_vector_FDR <- p.adjust(pval_HepG2_vector, method="fdr")
-FDR_HepG2 <- matrix(pval_HepG2_vector_FDR, nrow = nrow(pval_HepG2), ncol = ncol(pval_HepG2))
+glm_results$miRNA <- glm_results$miRNA |>
+  str_extract("^((?:[^A-Z]*[A-Z]){1}[^A-Z]*)") |>
+  str_remove("_.*") |>
+  str_remove("\\.$") |>
+  str_replace_all("\\.", "-")
 
-pval_K562_vector <- c(pval_K562)
-pval_K562_vector_FDR <- p.adjust(pval_K562_vector, method="fdr")
-FDR_K562 <- matrix(pval_K562_vector_FDR, nrow = nrow(pval_K562),ncol = ncol(pval_K562))
+glm_results$miRNA[str_detect(glm_results$miRNA, "let-7")] <- "let-7"
 
-colnames(FDR_HepG2) <- colnames(pval_HepG2)
-row.names(FDR_HepG2) <- row.names(pval_HepG2)
+# Define mapping from original names to canonical names
+mirna_name_mapping <- tibble(
+  original = c(
+    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
+    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
+    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
+    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
+    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
+    "miR-18ab", "miR-299", "miR-328a", "let-7"
+  ),
+  canonical = c(
+    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
+    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
+    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
+    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
+    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
+    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
+    "miR-328-3p", "let-7"
+  )
+)
 
-colnames(FDR_K562) <- colnames(pval_K562)
-row.names(FDR_K562) <- row.names(pval_K562)
+glm_results <- glm_results |>
+  left_join(mirna_name_mapping, by = c("miRNA" = "original")) |>
+  mutate(miRNA = coalesce(canonical, miRNA)) |>
+  select(-canonical)
 ```
 
-Switch the sign of coefficients so that they represent miRNA activity and not target stability
+# Reformat RBP sample names
 
 ```{r}
-coeff_HepG2 <- -(coeff_HepG2)
-coeff_K562 <- -(coeff_K562)
+extract_rbp_info <- function(sample_name) {
+  # Extract RBP name and replicate info from ENCODE naming convention
+  # Format: ENCSR000WWW_XX_YY_ZZ where XX is the RBP, YY is the replicate (11 or 21) and ZZ is cell line code
+  
+  parts <- unlist(strsplit(sample_name, "_"))
+  rbp_id <- parts[2]
+  rep_og <- parts[3]
+  
+  # Parse replicate number
+  if (rep_og == "11") {
+    rep <- "rep1"
+  } else if (rep_og == "21") {
+    rep <- "rep2"
+  } else {
+    rep <- NA_character_
+  }
+
+  rbp_name <- paste0(rbp_id, "_", rep)
+  
+  rbp_name
+}
+
+glm_results <- glm_results |>
+  mutate(RBP = map_chr(sample_name, extract_rbp_info))
 ```
 
-Save the results
+# Save results
 
 ```{r}
-write.csv(coeff_HepG2, here("ENCODE_RBP_KD", "output", "supplementary_tables", "coeff_HepG2_corrShRNA6nts7nts_sigPosFishers.csv"))
-write.csv(pval_HepG2, here("ENCODE_RBP_KD", "output", "supplementary_tables", "pval_HepG2_corrShRNA6nts7nts_sigPosFishers.csv"))
-write.csv(FDR_HepG2, here("ENCODE_RBP_KD", "output", "supplementary_tables", "FDR_HepG2_corrShRNA6nts7nts_sigPosFishers.csv"))
-write.csv(coeff_K562, here("ENCODE_RBP_KD", "output", "supplementary_tables", "coeff_K562_corrShRNA6nts7nts_sigPosFishers.csv"))
-write.csv(pval_K562, here("ENCODE_RBP_KD", "output", "supplementary_tables", "pval_K562_corrShRNA6nts7nts_sigPosFishers.csv"))
-write.csv(FDR_K562, here("ENCODE_RBP_KD", "output", "supplementary_tables", "FDR_K562_corrShRNA6nts7nts_sigPosFishers.csv"))
+# Save all results in long-format tibble 
+write.csv(glm_results, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_miRNA_activity.csv"), row.names = FALSE)
 ```
+
 
 In preparation for making the heatmaps, merge the matrices for all coefficients or p-values from both cell lines
 

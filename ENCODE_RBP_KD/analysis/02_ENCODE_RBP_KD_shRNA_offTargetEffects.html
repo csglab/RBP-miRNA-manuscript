@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">shRNA positions associated with changes in mRNA stability in ENCODE RBP KD samples</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-July-17</h4>
+<h4 class="date">2026-July-20</h4>
 
 </div>
 
@@ -1860,8 +1860,8 @@ names(UTR_seq) &lt;- gsub(&quot;.*gene=&quot;, &quot;&quot;, names(UTR_seq))</co
 </div>
 <div id="load-bias-and-batch-corrected-stability-estimates" class="section level1" number="5">
 <h1><span class="header-section-number">5</span> Load bias and batch corrected stability estimates</h1>
-<pre class="r"><code>stab_HepG2 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;ENCODE_RBP_KD_bias_batch_corrected_stability_&quot;, &quot;HepG2&quot;, &quot;.csv&quot;)), row.names=1)
-stab_K562 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, paste0(&quot;ENCODE_RBP_KD_bias_batch_corrected_stability_&quot;, &quot;K562&quot;, &quot;.csv&quot;)), row.names=1)</code></pre>
+<pre class="r"><code>stab_HepG2 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;ENCODE_RBP_KD_bias_batch_corrected_stability_HepG2.csv&quot;), row.names=1)
+stab_K562 &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;ENCODE_RBP_KD_bias_batch_corrected_stability_K562.csv&quot;), row.names=1)</code></pre>
 </div>
 <div id="filter-stability-and-utr-sequences-tables-to-keep-the-same-genes-in-the-same-order" class="section level1" number="6">
 <h1><span class="header-section-number">6</span> Filter stability and UTR sequences tables to keep the same genes in the same order</h1>
@@ -1898,7 +1898,7 @@ stab_K562_fltr &lt;- stab_K562[common_genes_K562, ]</code></pre>
 </div>
 <div id="test-associations-between-counts-of-shrna-6-mers7-mers-in-3utrs-and-mrna-stability" class="section level1" number="8">
 <h1><span class="header-section-number">8</span> Test associations between counts of shRNA 6-mers/7-mers in 3’UTRs and mRNA stability</h1>
-<pre class="r"><code># Helper function to reverse complement DNA sequences
+<pre class="r"><code># Helper function to reverse-complement shRNA sequence to obtain the genomic target sequence
 revComp &lt;- function(seq) {
   as.character(reverseComplement(DNAString(seq)))
 }
@@ -1924,30 +1924,52 @@ count_kmers &lt;- function(subject, kmers) {
   counts_mat
 }
 
-# Storage for regression results 
-regression_results &lt;- list()
+# Helper function to generate k-mers from shRNA and count them in UTRs
+# Returns k-mer counts for all positions in the shRNA (including duplicates)
+generate_kmer_counts &lt;- function(shRNA, UTRs_dna, kmer_len, revComp) {
+  # Generate k-mers using sliding window
+  n &lt;- nchar(shRNA)
+  mers &lt;- substring(shRNA, 1:(n - kmer_len + 1), kmer_len:n)
+  
+  # Reverse complement to get target sequences
+  mers &lt;- unlist(lapply(mers, revComp))
+  
+  # Track unique k-mers (for regression fitting)
+  dup_mask &lt;- duplicated(mers)
+  unique_mers &lt;- mers[!dup_mask]
+  
+  # Count occurrences in UTRs
+  counts_unique &lt;- count_kmers(UTRs_dna, unique_mers)
+  
+  # Restore counts for all positions including duplicates
+  counts_all &lt;- counts_unique[, match(mers, unique_mers), drop = FALSE]
+  colnames(counts_all) &lt;- NULL  # Remove column names as they&#39;re position-based
+  
+  list(
+    mers_all = mers,
+    mers_unique = unique_mers,
+    counts_unique = counts_unique,
+    counts_all = counts_all
+  )
+}
 
+# Storage for regression results and k-mer counts
+regression_results &lt;- list()
+kmer_counts &lt;- list()
+
+# Testing associations between 6/7-mer counts and mRNA stability
 for(len in c(6, 7)) {
   regression_results[[paste0(&quot;len_&quot;, len)]] &lt;- list()
+  kmer_counts[[paste0(&quot;len_&quot;, len)]] &lt;- list()
   
   for (cell in c(&quot;HepG2&quot;, &quot;K562&quot;)) {
     # UTR sequences for the cell line
-    UTRs &lt;- switch(
-      cell,
-      HepG2 = UTR_HepG2_fltr,
-      K562  = UTR_K562_fltr
-    )
-    
-    # Convert once for efficient pattern matching
+    UTRs &lt;- switch(cell, HepG2 = UTR_HepG2_fltr, K562 = UTR_K562_fltr)
     UTRs_dna &lt;- DNAStringSet(UTRs)
     names(UTRs_dna) &lt;- names(UTRs)
   
     # Stability data for the cell line
-    stab &lt;- switch(
-      cell,
-      HepG2 = stab_HepG2_fltr,
-      K562  = stab_K562_fltr
-    )
+    stab &lt;- switch(cell, HepG2 = stab_HepG2_fltr, K562 = stab_K562_fltr)
   
     # For each sample
     for(i in seq_len(ncol(stab))) {
@@ -1959,59 +1981,47 @@ for(len in c(6, 7)) {
         next
       }
       
-      # Define the shRNA sequence
+      # Get shRNA and generate k-mer counts
       shRNA &lt;- RNAi_seqs[RNAi_seqs$Experiment == experiment, ]$RNAi_sequence
-      stopifnot(length(shRNA) == 1)
-      
-      # Use a sliding window to get all k-mers in the shRNA
-      k &lt;- len
-      n &lt;- nchar(shRNA)
-      mers &lt;- substring(shRNA, 1:(n - k + 1), k:n)
-      
-      # Reverse complement to get target sequences
-      mers &lt;- unlist(lapply(mers, revComp))
-      
-      # Track which kmers are unique (duplicates will be restored later)
-      dup_mask &lt;- duplicated(mers)
-      unique_mers &lt;- mers[!dup_mask]
-      
-      # Count occurrences of each unique k-mer in every gene&#39;s 3&#39;UTR
-      mers_counts &lt;- count_kmers(UTRs_dna, unique_mers)
-      
-      # Stop processing if a k-mer is absent from all 3&#39;UTRs
-      if (sum(colSums(mers_counts) == 0) &gt; 0) {
-        stop(&quot;ERROR: kmers doesn&#39;t occur in any UTR(s)&quot;)
+      if(length(shRNA)!=1){
+        stop(&quot;Expected one shRNA for experiment &quot;, experiment)
       }
       
-      # Fit a linear regression model on sample stability data using the kmers counts as predictor
-      fit &lt;- glm(stab[, i] ~ data.matrix(mers_counts), na.action = na.exclude)
+      kmer_data &lt;- generate_kmer_counts(shRNA, UTRs_dna, len, revComp)
       
-      # Extract regression coefficients and p-values
+      # Validation: ensure no k-mers are absent from all UTRs
+      if (sum(colSums(kmer_data$counts_unique) == 0) &gt; 0) {
+        stop(&quot;ERROR: some k-mers don&#39;t occur in any UTR(s)&quot;)
+      }
+      
+      # Fit regression using unique k-mer counts (avoids multicollinearity)
+      fit &lt;- lm(stab[, i] ~ data.matrix(kmer_data$counts_unique), na.action = na.exclude)
+      
+      # Extract and restore coefficients/p-values for all positions
       fit_summary &lt;- coef(summary(fit))
-      coeffs &lt;- as.data.frame(fit_summary[-1, &quot;Estimate&quot;, drop = FALSE])
-      pvals &lt;- as.data.frame(fit_summary[-1, &quot;Pr(&gt;|t|)&quot;, drop = FALSE])
+      coeffs_unique &lt;- fit_summary[-1, &quot;Estimate&quot;]
+      pvals_unique &lt;- fit_summary[-1, &quot;Pr(&gt;|t|)&quot;]
       
-      # Clean up row names
-      rownames(coeffs) &lt;- gsub(&quot;.*)&quot;, &quot;&quot;, rownames(coeffs))
-      rownames(pvals) &lt;- gsub(&quot;.*)&quot;, &quot;&quot;, rownames(pvals))
+      # Match back to all positions (including duplicates)
+      coeffs_all &lt;- coeffs_unique[match(kmer_data$mers_all, kmer_data$mers_unique)]
+      pvals_all &lt;- pvals_unique[match(kmer_data$mers_all, kmer_data$mers_unique)]
       
-      # Reinsert duplicated k-mers so regression coefficients align with their original positions along the shRNA
-      restore_idx &lt;- match(mers, unique_mers)
-      
-      coeffs &lt;- coeffs[restore_idx, , drop = FALSE]
-      pvals  &lt;- pvals[restore_idx, , drop = FALSE]
-      
-      # Store coefficient and p-value vectors in memory (indexed by position along shRNA)
       sample_name &lt;- colnames(stab)[i]
+      
+      # Store regression results
       regression_results[[paste0(&quot;len_&quot;, len)]][[sample_name]] &lt;- list(
-        coeffs = coeffs[, 1],
-        pvals = pvals[, 1]
+        coeffs = coeffs_all,
+        pvals = pvals_all
       )
+      
+      # Store k-mer counts for later use in stability correction
+      kmer_counts[[paste0(&quot;len_&quot;, len)]][[sample_name]] &lt;- kmer_data$counts_all
     }
   }
 }
 
-saveRDS(regression_results, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;rds&quot;, &quot;regression_results.rds&quot;))</code></pre>
+saveRDS(regression_results, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;rds&quot;, &quot;regression_results.rds&quot;))
+# saveRDS(kmer_counts, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;rds&quot;, &quot;kmer_counts.rds&quot;))</code></pre>
 </div>
 <div id="visualize-the-shrna-positions-most-strongly-associated-with-mrna-stability" class="section level1" number="9">
 <h1><span class="header-section-number">9</span> Visualize the shRNA positions most strongly associated with mRNA stability</h1>
@@ -2067,6 +2077,145 @@ saveRDS(regression_results, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, 
 <div id="identify-positions-of-shrnas-that-are-predictive-of-stability-changes-fishers-exact-test" class="section level1" number="10">
 <h1><span class="header-section-number">10</span> Identify positions of shRNAs that are predictive of stability changes (Fisher’s exact test)</h1>
 <p>Using a Fisher’s test to determine for each position, if there are more significant associations (FDR &lt; 0.05) that we would expect by chance. Repeat separately for the coefficients of 6-mers and 7-mers. Then in the regression to correct stability estimates, only use the 6-mers and 7-mers of these positions.</p>
+<pre class="r"><code># Helper function to identify significant positions using Fisher&#39;s exact test
+identify_sig_positions &lt;- function(FDR_mat) {
+  # Convert FDR matrix to binary (sig = 1, not sig = 0), preserving matrix structure
+  FDR_bin &lt;- matrix(as.integer(FDR_mat &lt; 0.05), nrow = nrow(FDR_mat))
+  FDR_bin[is.na(FDR_mat)] &lt;- 0
+  
+  # For each position, run Fisher&#39;s test: is this position enriched for significant hits?
+  n_pos &lt;- ncol(FDR_bin)
+  fisher_results &lt;- data.frame(
+    position = seq_len(n_pos),
+    p_value = numeric(n_pos),
+    odds_ratio = numeric(n_pos)
+  )
+  
+  for (pos in seq_len(n_pos)) {
+    # Contingency table: [sig at pos, sig elsewhere | not sig at pos, not sig elsewhere]
+    sig_at_pos &lt;- sum(FDR_bin[, pos] == 1)
+    sig_elsewhere &lt;- sum(FDR_bin[, -pos] == 1)
+    not_sig_at_pos &lt;- sum(FDR_bin[, pos] == 0)
+    not_sig_elsewhere &lt;- sum(FDR_bin[, -pos] == 0)
+    
+    cont_tbl &lt;- matrix(c(sig_at_pos, sig_elsewhere, not_sig_at_pos, not_sig_elsewhere), nrow = 2)
+    test_result &lt;- fisher.test(cont_tbl)
+    
+    fisher_results$p_value[pos] &lt;- test_result$p.value
+    fisher_results$odds_ratio[pos] &lt;- test_result$estimate
+  }
+  
+  # Return positions with significant enrichment (p &lt; 0.05 AND odds ratio &gt; 1)
+  fisher_results$position[fisher_results$p_value &lt; 0.05 &amp; fisher_results$odds_ratio &gt; 1]
+}
+
+# Helper function to extract p-values from regression_results and prepare for FDR correction
+extract_pvals_FDR_corr &lt;- function(regression_results, len) {
+  # Extract p-values for the specified k-mer length from regression_results
+  results_key &lt;- paste0(&quot;len_&quot;, len)
+  sample_results &lt;- regression_results[[results_key]]
+  
+  # Extract p-value vectors from each sample
+  pvals_data &lt;- lapply(sample_results, function(x) x$pvals)
+  
+  # Pad to equal length
+  max_len &lt;- max(lengths(pvals_data))
+  pvals_data &lt;- lapply(pvals_data, function(x) {
+    c(x, rep(NA, max_len - length(x)))
+  })
+  
+  # Combine into matrix
+  pvals_matrix &lt;- do.call(rbind, pvals_data)
+  
+  # Apply FDR correction across entire matrix
+  pvals_vector &lt;- c(pvals_matrix)
+  pvals_fdr &lt;- p.adjust(pvals_vector, method = &quot;fdr&quot;)
+  matrix(pvals_fdr, nrow = nrow(pvals_matrix), ncol = ncol(pvals_matrix))
+}
+
+# Process 6-mers
+FDR_6mers &lt;- extract_pvals_FDR_corr(regression_results, 6)
+sig_pos_6mers &lt;- identify_sig_positions(FDR_6mers)
+sig_pos_6mers</code></pre>
+<pre><code>## [1]  1  3  4 35 36 37 38</code></pre>
+<pre class="r"><code># Process 7-mers
+FDR_7mers &lt;- extract_pvals_FDR_corr(regression_results, 7)
+sig_pos_7mers &lt;- identify_sig_positions(FDR_7mers)
+sig_pos_7mers</code></pre>
+<pre><code>## [1]  1  3  4 34 35 36 37</code></pre>
+</div>
+<div id="correct-stability-estimates-for-shrna-off-target-effects" class="section level1" number="11">
+<h1><span class="header-section-number">11</span> Correct stability estimates for shRNA off-target effects</h1>
+<p>Using a regression with 6-mer and 7-mer counts from the positions associated with off-target effects as predictors, retain residuals as corrected stability data</p>
+<pre class="r"><code># Helper function to correct stability estimates using significant k-mer positions (associated with off-target effects)
+correct_stability &lt;- function(stab, kmer_counts_6, kmer_counts_7, sig_pos_6mers, sig_pos_7mers) {
+  # Initialize the corrected stability matrix
+  corr_stab &lt;- matrix(NA, nrow = nrow(stab), ncol = ncol(stab))
+  rownames(corr_stab) &lt;- rownames(stab)
+  colnames(corr_stab) &lt;- colnames(stab)
+  
+  for (i in seq_len(ncol(stab))) {
+    sample_name &lt;- colnames(stab)[i]
+    
+    # Skip if no k-mer counts available for this sample
+    if (!(sample_name %in% names(kmer_counts_6))) {
+      next
+    }
+    
+    # Extract counts for significant positions and merge
+    counts_6 &lt;- kmer_counts_6[[sample_name]][, sig_pos_6mers, drop = FALSE]
+    counts_7 &lt;- kmer_counts_7[[sample_name]][, sig_pos_7mers, drop = FALSE]
+    counts_merged &lt;- cbind(counts_6, counts_7)
+    
+    # Skip if no significant positions found for this sample
+    if (ncol(counts_merged) == 0) {
+      next
+    }
+    
+    # Remove duplicate columns (can occur if different positions have identical k-mers)
+    dup_cols &lt;- duplicated(t(counts_merged))
+    if (any(dup_cols)) {
+      warning(paste(&quot;Sample&quot;, sample_name, &quot;: Removing&quot;, sum(dup_cols), &quot;duplicate column(s)&quot;))
+      counts_merged &lt;- counts_merged[, !dup_cols, drop = FALSE]
+    }
+    
+    # Verify gene ordering matches
+    if (!all(rownames(counts_merged) == rownames(stab))) {
+      stop(paste(&quot;Gene order mismatch for sample&quot;, sample_name))
+    }
+    
+    # Fit regression and extract residuals as corrected stability
+    fit &lt;- lm(stab[, i] ~ data.matrix(counts_merged), na.action = na.exclude)
+    corr_stab[, i] &lt;- residuals(fit)
+  }
+  
+  corr_stab
+}
+
+# Generate corrected stability matrices
+corr_stab_HepG2 &lt;- correct_stability(
+  stab_HepG2_fltr,
+  kmer_counts$len_6,
+  kmer_counts$len_7,
+  sig_pos_6mers,
+  sig_pos_7mers
+)
+
+corr_stab_K562 &lt;- correct_stability(
+  stab_K562_fltr,
+  kmer_counts$len_6,
+  kmer_counts$len_7,
+  sig_pos_6mers,
+  sig_pos_7mers
+)
+
+# Remove samples with all NAs (i.e., no valid k-mer counts)
+corr_stab_HepG2 &lt;- corr_stab_HepG2[, colSums(is.na(corr_stab_HepG2)) &lt; nrow(corr_stab_HepG2)]
+corr_stab_K562 &lt;- corr_stab_K562[, colSums(is.na(corr_stab_K562)) &lt; nrow(corr_stab_K562)]
+
+# Save corrected stability estimates
+write.csv(corr_stab_HepG2, file = here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_HepG2.csv&quot;))
+write.csv(corr_stab_K562, file = here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_K562.csv&quot;))</code></pre>
 <pre class="r"><code>sessionInfo()</code></pre>
 <pre><code>## R version 4.4.1 (2024-06-14)
 ## Platform: x86_64-apple-darwin20
@@ -2087,23 +2236,23 @@ saveRDS(regression_results, here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, 
 ## [8] base     
 ## 
 ## other attached packages:
-##  [1] gplots_3.3.0        data.table_1.18.4   Biostrings_2.72.1  
-##  [4] GenomeInfoDb_1.40.1 XVector_0.44.0      IRanges_2.38.1     
-##  [7] S4Vectors_0.42.1    BiocGenerics_0.50.0 here_1.0.2         
+##  [1] gplots_3.3.0        data.table_1.18.4   Biostrings_2.74.1  
+##  [4] GenomeInfoDb_1.42.3 XVector_0.46.0      IRanges_2.40.1     
+##  [7] S4Vectors_0.44.0    BiocGenerics_0.52.0 here_1.0.2         
 ## [10] BiocStyle_2.32.1   
 ## 
 ## loaded via a namespace (and not attached):
-##  [1] crayon_1.5.3            httr_1.4.7              cli_3.6.6              
+##  [1] crayon_1.5.3            httr_1.4.8              cli_3.6.6              
 ##  [4] knitr_1.51              rlang_1.3.0             xfun_0.60              
-##  [7] KernSmooth_2.23-24      otel_0.2.0              UCSC.utils_1.0.0       
+##  [7] KernSmooth_2.23-24      otel_0.2.0              UCSC.utils_1.2.0       
 ## [10] gtools_3.9.5            jsonlite_2.0.0          rprojroot_2.1.1        
 ## [13] htmltools_0.5.9         sass_0.4.10             rmarkdown_2.31         
 ## [16] caTools_1.18.3          evaluate_1.0.5          jquerylib_0.1.4        
 ## [19] bitops_1.0-9            fastmap_1.2.0           yaml_2.3.12            
-## [22] lifecycle_1.0.5         bookdown_0.42           BiocManager_1.30.25    
+## [22] lifecycle_1.0.5         bookdown_0.42           BiocManager_1.30.27    
 ## [25] compiler_4.4.1          rstudioapi_0.17.1       digest_0.6.39          
-## [28] R6_2.6.1                GenomeInfoDbData_1.2.12 bslib_0.11.0           
-## [31] tools_4.4.1             zlibbioc_1.50.0         cachem_1.1.0</code></pre>
+## [28] R6_2.6.1                GenomeInfoDbData_1.2.13 bslib_0.11.0           
+## [31] tools_4.4.1             zlibbioc_1.52.0         cachem_1.1.0</code></pre>
 </div>
 
 

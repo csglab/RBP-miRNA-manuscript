@@ -207,6 +207,7 @@ for(len in c(6, 7)) {
 }
 
 saveRDS(regression_results, here("ENCODE_RBP_KD", "output", "rds", "regression_results.rds"))
+# saveRDS(kmer_counts, here("ENCODE_RBP_KD", "output", "rds", "kmer_counts.rds"))
 
 ```
 
@@ -270,7 +271,7 @@ We see that for 6-mers (top), positions 34-38 on shRNAs are associated with decr
 
 Using a Fisher's test to determine for each position, if there are more significant associations (FDR < 0.05) that we would expect by chance. Repeat separately for the coefficients of 6-mers and 7-mers. Then in the regression to correct stability estimates, only use the 6-mers and 7-mers of these positions.
 
-```{r, eval = F}
+```{r}
 
 # Helper function to identify significant positions using Fisher's exact test
 identify_sig_positions <- function(FDR_mat) {

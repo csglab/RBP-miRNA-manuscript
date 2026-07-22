@@ -1,5 +1,5 @@
 ---
-title: "Correction of mRNA stability estimates of ENCODE RBP KD samples for batch effects"
+title: "Correction of mRNA stability estimates of ENCODE RBP KD samples for bias (identified by Alkallas et al.) and batch effects"
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
 output: 
@@ -24,7 +24,9 @@ library(MASS)
 library(gplots)
 ```
 
-# Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS. These were previously filtered to remove estimates with stdev > 0.5 (which were replaced with NA).
+# Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS. 
+
+These were previously filtered to remove estimates with stdev > 0.5 (which were replaced with NA).
 
 ```{r}
 ddf <- data.table::fread(here("ENCODE_RBP_KD", "data", "BETAS.ddf.filtered.allSamples.txt"), header=TRUE) |>
@@ -52,7 +54,7 @@ process_cell_line <- function(cell_line) {
   ddf_noCtrl <- ddf_cl[, !grepl("ctrl", colnames(ddf_cl))]
   dfi_noCtrl <- dfi_cl[, !grepl("ctrl", colnames(dfi_cl))]
 
-  # filter out genes with fewer than `min_valid_samples` non-NA ddf values
+  # Filter out genes with fewer than `min_valid_samples` non-NA ddf values
   keep <- rowSums(!is.na(ddf_noCtrl)) >= min_valid_samples
   ddf_fltr <- ddf_noCtrl[keep, ]
   dfi_fltr <- dfi_noCtrl[keep, ]

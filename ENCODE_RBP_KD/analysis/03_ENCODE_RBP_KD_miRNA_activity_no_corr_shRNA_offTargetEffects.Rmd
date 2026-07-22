@@ -1,5 +1,5 @@
 ---
-title: "miRNA activity in ENCODE RBP KD samples (without correction for shRNA
+title: "Inferring miRNA activity in ENCODE RBP KD samples (without correction for shRNA
   off-target effects)"
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
@@ -19,417 +19,323 @@ set.seed(1)
 # Load libraries 
 
 ```{r}
-library(gplots)
-library(plyr)
+library(tidyverse)
 library(scales)
-library(reshape2)
-library(ggplot2)
-library(here)
 ```
 
-# Load bias and batch corrected mRNA stability data for ENCODE RBP KD samples.
+# Load bias and batch corrected stability data, 3'UTR nucleotide composition and length annotations, and miRNA binding network
 
 ```{r}
-stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_HepG2.csv"), row.names=1)
-stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_K562.csv"), row.names=1)
+stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_HepG2.csv"))
+stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_bias_batch_corrected_stability_K562.csv"))
+
+UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length.txt"), header = TRUE, row.names = NULL)
+affinity_miRNAs <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_miRNA_affinity.txt"), header = TRUE, row.names = NULL)
 ```
 
-# Load 3'UTR length and nucleotide composition annotations
+# Prepare GLM data
+
+Merge 3'UTR annotations with stability data for each cell line
 
 ```{r}
-UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition.txt"), header=TRUE, row.names=NULL)
-UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length.txt"), header=TRUE, row.names=NULL)
+UTR <- merge(UTR_nt, UTR_length, by = 1)
+UTR_affinity <- merge(UTR, affinity_miRNAs, by = 1)
 
+glmMatrix_HepG2 <- merge(stab_HepG2, UTR_affinity, by = 1)
+glmMatrix_K562 <- merge(stab_K562, UTR_affinity, by = 1)
 ```
 
-# Load miRNA-mRNA predicted binding network
+# Fit GLM models 
+
+Run GLM for each RBP KD sample, extracting coefficients and p-values
 
 ```{r}
-affinity_miRNAs <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_miRNA_affinity.txt"), header=TRUE, row.names=NULL)
-
-```
-
-# Merge the above tables based on gene IDs, separately for each cell line
-
-```{r}
-UTR <- merge(UTR_nt, UTR_length, by=1)
-UTR_affinity <- merge(UTR, affinity_miRNAs, by=1)
-glmMatrix_HepG2 <- merge(stab_HepG2, UTR_affinity, by=1)
-glmMatrix_K562 <- merge(stab_K562, UTR_affinity, by=1)
-
-```
-
-# Create tables where the results from glm will be stored
-
-```{r}
-pval_HepG2 <- matrix(NA, nrow=ncol(stab_HepG2)-1, ncol=ncol(UTR_affinity)-1)
-rownames(pval_HepG2) = colnames(stab_HepG2)[-1]
-colnames(pval_HepG2) = colnames(UTR_affinity)[-1]
-
-pval_K562 <- matrix(NA, nrow=ncol(stab_K562)-1, ncol=ncol(UTR_affinity)-1)
-rownames(pval_K562) = colnames(stab_K562)[-1]
-colnames(pval_K562) = colnames(UTR_affinity)[-1]
-
-coeff_HepG2 <- pval_HepG2
-coeff_K562 <- pval_K562
-```
-
-# In each RBP KD sample, infer miRNA activity
-
-Run glm where the response variable is the mRNA stability, the predictor variable is the miRNA-mRNA predicted binding network, and the confounding variables are 3'UTR_length, 3'UTR nucleotide and dinucleotide composition
-
-```{r}
-for (i in seq_len(ncol(stab_HepG2))[-1]){
-  fit_HepG2 <- glm(as.matrix(glmMatrix_HepG2[,i]) ~ as.matrix(glmMatrix_HepG2[,413:ncol(glmMatrix_HepG2)]), na.action=na.exclude)
-  pval_HepG2[i-1,] <- as.vector(coef(summary(fit_HepG2))[,4])[-1]
-  coeff_HepG2[i-1,] <- as.vector(coef(summary(fit_HepG2))[,1])[-1]
+fit_glm_sample <- function(glm_data, sample_name, cell_line) {
+  # glm_data: complete data frame with response and all predictors
+  # sample_name: name of the RBP KD sample 
+  # cell_line: "HepG2" or "K562"
+  
+  response_col <- which(colnames(glm_data) == sample_name)
+  predictors_confounders_cols <- which(colnames(glm_data) != "X" & !grepl("ENCSR", colnames(glm_data)))
+  
+  # Formula: response ~ confounders and miRNA affinity predictors
+  # Intercept included automatically
+  formula_str <- paste0(
+    colnames(glm_data)[response_col], 
+    " ~ ",
+    paste(colnames(glm_data)[predictors_confounders_cols], collapse = " + ")
+  )
+  
+  fit <- glm(as.formula(formula_str), data = glm_data, na.action = na.exclude)
+  coef_summary <- coef(summary(fit))
+  
+  # Extract coefficients and p-values for predictors only (miRNA cols, skip intercept and confounders)
+  predictor_rows <- which(grepl("^(miR\\.|let\\.)", rownames(coef_summary)))
+  
+  tibble(
+    miRNA = rownames(coef_summary)[predictor_rows],
+    coefficient = coef_summary[predictor_rows, 1],
+    pvalue = coef_summary[predictor_rows, 4],
+    sample_name = sample_name,
+    cell_line = cell_line
+  )
 }
 
-for (i in seq_len(ncol(stab_K562))[-1]){
-  fit_K562 <- glm(as.matrix(glmMatrix_K562[,i]) ~ as.matrix(glmMatrix_K562[,426:ncol(glmMatrix_K562)]), na.action=na.exclude)
-  pval_K562[i-1,] <- as.vector(coef(summary(fit_K562))[,4])[-1]
-  coeff_K562[i-1,] <- as.vector(coef(summary(fit_K562))[,1])[-1]
+# Apply to all RBP KD samples in both cell lines
+rbp_sample_names_HepG2 <- colnames(stab_HepG2)[-1]
+rbp_sample_names_K562 <- colnames(stab_K562)[-1]
+
+results_HepG2 <- map_df(rbp_sample_names_HepG2, 
+                         ~fit_glm_sample(glmMatrix_HepG2, .x, "HepG2"))
+results_K562 <- map_df(rbp_sample_names_K562, 
+                        ~fit_glm_sample(glmMatrix_K562, .x, "K562"))
+
+# Combine results from both cell lines
+glm_results <- bind_rows(results_HepG2, results_K562) |>
+  mutate(
+    # Switch signs so coefficients represent miRNA activity (not target stability)
+    coefficient = -coefficient,
+    # Convert from ln to log2 scale
+    coefficient_log2 = log2(exp(coefficient))
+  )
+
+head(glm_results)
+```
+
+# Multiple testing correction (separately for each cell line)
+
+```{r}
+glm_results <- glm_results |>
+  group_by(cell_line) |>
+  mutate(FDR = p.adjust(pvalue, method = "fdr")) |>
+  ungroup()
+```
+
+# Reformat miRNA names
+
+```{r}
+glm_results$miRNA <- glm_results$miRNA |>
+  str_extract("^((?:[^A-Z]*[A-Z]){1}[^A-Z]*)") |>
+  str_remove("_.*") |>
+  str_remove("\\.$") |>
+  str_replace_all("\\.", "-")
+
+glm_results$miRNA[str_detect(glm_results$miRNA, "let-7")] <- "let-7"
+
+# Define mapping from original names to canonical names
+mirna_name_mapping <- tibble(
+  original = c(
+    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
+    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
+    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
+    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
+    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
+    "miR-18ab", "miR-299", "miR-328a", "let-7"
+  ),
+  canonical = c(
+    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
+    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
+    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
+    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
+    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
+    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
+    "miR-328-3p", "let-7"
+  )
+)
+
+glm_results <- glm_results |>
+  left_join(mirna_name_mapping, by = c("miRNA" = "original")) |>
+  mutate(miRNA = coalesce(canonical, miRNA)) |>
+  select(-canonical)
+```
+
+# Reformat RBP and sample names
+
+```{r}
+extract_rbp_info <- function(sample_name) {
+  # Extract RBP name and replicate info from ENCODE naming convention
+  # Format: ENCSR000WWW_XX_YY_ZZ where XX is the RBP, YY is the replicate (11 or 21) and ZZ is cell line code
+  
+  parts <- unlist(strsplit(sample_name, "_"))
+  rbp_id <- parts[2]
+  rep_og <- parts[3]
+  
+  # Parse replicate number
+  rep <- case_when(
+    rep_og == "11" ~ "rep1",
+    rep_og == "21" ~ "rep2",
+    TRUE ~ NA_character_
+  )
+
+  sample_name2 <- paste0(rbp_id, "_", rep)
+  
+  sample_name2
 }
-```
 
-# Discard 3'UTR variables that are no longer needed
+glm_results <- glm_results |>
+  mutate(sample_name2 = map_chr(sample_name, extract_rbp_info))
 
-Retain only the miRNA binding variables 
-
-```{r}
-pval_HepG2 <- pval_HepG2[,22:ncol(pval_HepG2)]
-pval_K562 <- pval_K562[,22:ncol(pval_K562)]
-
-coeff_HepG2 <- coeff_HepG2[,22:ncol(coeff_HepG2)]
-coeff_K562 <- coeff_K562[,22:ncol(coeff_K562)]
-```
-
-# Multiple testing correction
-
-```{r}
-pval_HepG2_vector <- c(pval_HepG2)
-pval_HepG2_vector_FDR <- p.adjust(pval_HepG2_vector, method="fdr")
-FDR_HepG2 <- matrix(pval_HepG2_vector_FDR, nrow = nrow(pval_HepG2),ncol = ncol(pval_HepG2))
-
-pval_K562_vector <- c(pval_K562)
-pval_K562_vector_FDR <- p.adjust(pval_K562_vector, method="fdr")
-FDR_K562 <- matrix(pval_K562_vector_FDR, nrow = nrow(pval_K562),ncol = ncol(pval_K562))
-
-colnames(FDR_HepG2) <- colnames(pval_HepG2)
-row.names(FDR_HepG2) <- row.names(pval_HepG2)
-
-colnames(FDR_K562) <- colnames(pval_K562)
-row.names(FDR_K562) <- row.names(pval_K562)
-```
-
-# Switch the signs of regression coefficients so that they represent miRNA activity and not target stability (miRNAs usually destabilize their targets)
-
-```{r}
-coeff_HepG2 <- -(coeff_HepG2)
-coeff_K562 <- -(coeff_K562)
+glm_results$RBP <- str_split_i(glm_results$sample_name, "_", 2)
 ```
 
 # Save results
 
 ```{r}
-write.csv(FDR_HepG2, file="FDR_glm_HepG2.csv")
-write.csv(FDR_K562, file="FDR_glm_K562.csv")
-
-write.csv(coeff_HepG2, file="coeff_glm_HepG2.csv")
-write.csv(coeff_K562, file="coeff_glm_K562.csv")
-
-write.csv(pval_HepG2, file="pvalues_glm_HepG2.csv")
-write.csv(pval_K562, file="pvalues_glm_K562.csv")
-
+# Save all results in long-format tibble 
+write.csv(glm_results, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_miRNA_activity_noCorrOffTargetEffects.csv"), row.names = FALSE)
 ```
 
-# Merge result matrices to have all results from both cell lines 
+# Identify significant interactions
+
+Find RBP-miRNA pairs with FDR < 0.05 in at least one sample
 
 ```{r}
-coeff_HepG2andK562 <- rbind.fill(as.data.frame(coeff_HepG2), as.data.frame(coeff_K562))
-names_coeff <- c(row.names(coeff_HepG2), row.names(coeff_K562))
-row.names(coeff_HepG2andK562) <- names_coeff
+significant_interactions <- glm_results |>
+  filter(FDR < 0.05) |>
+  distinct(RBP, miRNA) |>
+  mutate(is_significant = TRUE)
 
-pval_HepG2andK562 <- rbind.fill(as.data.frame(pval_HepG2), as.data.frame(pval_K562))
-names_pval <- c(row.names(pval_HepG2), row.names(pval_K562))
-row.names(pval_HepG2andK562) <- names_pval
-
-FDR_HepG2andK562 <- rbind.fill(as.data.frame(FDR_HepG2), as.data.frame(FDR_K562))
-names_FDR <- c(row.names(FDR_HepG2), row.names(FDR_K562))
-row.names(FDR_HepG2andK562) <- names_FDR
-
+significant_interactions
 ```
 
-# Reformating miRNA names
+# Prepare data for heatmap
 
 ```{r}
-mirs <- colnames(coeff_HepG2andK562)
-for (m in mirs)
-{
-  d <- m
-  d2 <- unlist(strsplit(d, "")) 
-  d3 <- grep("[A-Z]", d2)[2]
-  d4 <- paste0(c(d2[1:(d3-1)]), collapse="")
-  d5 <- unlist(strsplit(d4, "_"))[1]
-  d6 <- gsub("\\.$", "", d5)
-  d7 <- gsub("\\.", "-", d6)
-  mirs[mirs == m] <- d7
-}
-mirs[grep("let-7", mirs)] <- "let-7"
-colnames(coeff_HepG2andK562) <- mirs
-colnames(pval_HepG2andK562) <- mirs
-colnames(FDR_HepG2andK562) <- mirs
-
-```
-
-# List of RBPs that have RBP KD samples present in the data
-
-```{r}
-extract_string = function(x, n, i){
-    do.call(c, lapply(x, function(X)
-        paste(unlist(strsplit(X, "_"))[(n+1):(i)], collapse = "_")))
-} # To get string betwen nth and ith instance of the delimiter "_", from https://stackoverflow.com/questions/44934703/r-extract-string-between-nth-and-ith-instance-of-delimiter#44934922
-
-RBPs <- row.names(coeff_HepG2andK562)
-RBPs <- extract_string(RBPs, 1, 4)
-RBPs[grep("_11_", RBPs)] <- paste(RBPs[grep("_11_", RBPs)], "_rep1", sep="")
-RBPs[grep("_21_", RBPs)] <- paste(RBPs[grep("_21_", RBPs)], "_rep2", sep="")
-RBPs <- gsub("_21_", "_", RBPs)
-RBPs <- gsub("_11_", "_", RBPs)
-RBPs <- gsub("_.*", "", RBPs)
-
-```
-
-# List of interactions that have a significant hit in at least one replicate of at least one cell line
-
-```{r}
-list_sig <- list()
-x = 1
-for (r in 1:nrow(FDR_HepG2andK562))
-{
-  for (cl in 1:ncol(FDR_HepG2andK562))
-  {
-    RBP <- RBPs[r]
-    miR <- mirs[cl]
-    if (FDR_HepG2andK562[r, cl] < 0.05)
-    {
-      list_sig[[x]] <- c(RBP, miR)
-      x = x + 1
-    }
-  }
-}
-list_sig <- unique(list_sig)
-
-```
-
-# Log-transform the p-values and create a matrix of signed log10(p-values)
-
-Where values for any replicates of interactions that don't have at least one significant hit are replaced with 0s
-
-```{r}
-log_pval_HepG2andK562 <- log10(pval_HepG2andK562)
-
-signs <- coeff_HepG2andK562
-signs[signs < 0] <- -1
-signs[signs > 0] <- 1
-
-signed_log_pval_HepG2andK562 <- abs(log_pval_HepG2andK562) * signs
-
-signed_log_pval_FDR <- data.matrix(signed_log_pval_HepG2andK562)
-for (r in 1:nrow(signed_log_pval_HepG2andK562))
-{
-  for (cl in 1:ncol(signed_log_pval_HepG2andK562))
-  {
-    RBP <- RBPs[r]
-    miR <- mirs[cl]
-    int <- c(RBP, miR)
-    if (!(list(int) %in% list_sig))
-    {
-      signed_log_pval_FDR[r, cl] <- 0
-    }
-  }
+# Helper function to create sample × miRNA matrices
+make_matrix <- function(data, value_col) {
+  data |>
+    select(sample_name, miRNA, {{ value_col }}) |>
+    pivot_wider(
+      names_from = miRNA,
+      values_from = {{ value_col }},
+      values_fn = mean,
+      values_fill = NA
+    ) |>
+    column_to_rownames("sample_name") |>
+    as.matrix()
 }
 
+# Matrix of all coefficients
+heatmap_all <- make_matrix(glm_results, coefficient)
+
+# Matrix for display: non-significant interactions set to zero
+heatmap_display <- glm_results |>
+  left_join(significant_interactions,
+            by = c("RBP", "miRNA")) |>
+  mutate(
+    coefficient = if_else(is.na(is_significant), 0, coefficient)
+  ) |>
+  select(sample_name, miRNA, coefficient) |>
+  pivot_wider(
+    names_from = miRNA,
+    values_from = coefficient,
+    values_fn = mean,
+    values_fill = 0
+  ) |>
+  column_to_rownames("sample_name") |>
+  as.matrix()
+
+# Remove rows and columns with no significant interactions
+keep_rows <- rowSums(heatmap_display, na.rm = TRUE) != 0
+keep_cols <- colSums(heatmap_display, na.rm = TRUE) != 0
+
+heatmap_display <- heatmap_display[keep_rows, keep_cols]
+heatmap_all <- heatmap_all[rownames(heatmap_display), colnames(heatmap_display)]
+
+# Matrix of signed log10 p-values for clustering
+signed_log_pval_matrix <- glm_results |>
+  mutate(
+    signed_log10_pval = abs(log10(pvalue)) * sign(coefficient)
+  ) |>
+  make_matrix(signed_log10_pval)
+
+signed_log_pval_matrix <- signed_log_pval_matrix[
+  rownames(heatmap_display),
+  colnames(heatmap_display)
+]
+
+# Cluster samples using signed log10 p-values
+dist_matrix <- as.dist((1 - cor(t(signed_log_pval_matrix))) / 2)
+hc <- hclust(dist_matrix, method = "complete")
+
+# Reorder rows by clustering
+dat_clustered <- heatmap_all[rev(hc$order), ]
+
+# Sort columns by row of maximum absolute coefficient
+col_max_row <- apply(abs(dat_clustered), 2, which.max)
+dat_sorted <- dat_clustered[, order(col_max_row)]
+
+# Create mapping of ENCODE names to display labels
+row_label_map <- glm_results |>
+  select(sample_name, sample_name2) |>
+  distinct() |>
+  deframe()
+
+ordered_labels <- row_label_map[rownames(dat_sorted)]
+
+# Prepare plotting data
+plot_data <- glm_results |>
+  filter(
+    !is.na(miRNA),
+    sample_name %in% rownames(dat_sorted),
+    miRNA %in% colnames(dat_sorted)
+  ) |>
+  mutate(
+    coefficient_log2 = pmin(abs(coefficient_log2), 0.35),
+    signed_log10_pval = pmax(
+      pmin(abs(log10(pvalue)) * sign(coefficient), 5),
+      -5
+    ),
+    sample_name = factor(sample_name, levels = rownames(dat_sorted)),
+    miRNA = factor(miRNA, levels = colnames(dat_sorted))
+  )
 ```
 
-# Remove rows and columns that only contain 0s
+# Create heatmap
 
 ```{r}
-signed_log_pval_FDR <- signed_log_pval_FDR[rowSums(signed_log_pval_FDR) != 0, ]
-signed_log_pval_FDR <- signed_log_pval_FDR[, colSums(signed_log_pval_FDR) != 0]
-```
+pdf(here("ENCODE_RBP_KD", "output", "figures", 
+         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits.pdf"),
+    width = 15, height = 35)
 
-# The previous steps were done for filtering, now we get back all of the values
+ggplot(plot_data) +
+  geom_point(aes(
+    x = miRNA,
+    y = fct_rev(sample_name),
+    size = coefficient_log2,
+    fill = signed_log10_pval
+  ),
+  shape = 21,
+  color = "transparent") +
+  scale_size("miRNA activity", range = c(0.5, 8), breaks = seq(0, 0.35, 0.05), limits = c(0, 0.35), guide = guide_legend(override.aes = list(fill = "grey50"))) +
+  scale_fill_gradient2("Signed log10(P-value)", limits = c(-5, 5), low = "blue", mid = "white", high = "red") +
+  scale_y_discrete(labels = rev(ordered_labels)) +
+  labs(x = "miRNAs", y = "RBP KD samples") +
+  theme(
+    legend.key.size = unit(1.5, "lines"),
+    text = element_text(size = 20),
+    axis.text = element_text(size = 14),
+    axis.text.x = element_text(angle = 90, size = 16, vjust = 0.5, hjust = 1),
+    legend.position = "left",
+    panel.background = element_rect(fill = "white", colour = "white")
+  )
 
-```{r}
-signed_log_pval_FDR <- signed_log_pval_HepG2andK562[match(row.names(signed_log_pval_FDR), row.names(signed_log_pval_HepG2andK562)), match(colnames(signed_log_pval_FDR), colnames(signed_log_pval_HepG2andK562))]
-signed_log_pval_FDR <- data.matrix(signed_log_pval_FDR)
-```
-
-# Sort the data to get a diagonal of significant hits when making the heatmap
-
-```{r}
-htmp <- heatmap.2(data.matrix(signed_log_pval_FDR), hclust=function(x) hclust(x,method="complete"), distfun=function(x) as.dist((1-cor(t(x)))/2), Colv = F, dendrogram = "row")
-dat_clustered <- signed_log_pval_FDR[rev(htmp$rowInd), htmp$colInd]
-
-# Define column maximums
-col_max <- apply(abs(dat_clustered),2,max)
-
-# Define which row has each maximum (absolute value)
-which_row_col_max <- function (x)
-{
-  row_col_max <- as.vector(which(abs(dat_clustered) == x, arr.ind = TRUE))[1] # Row where this col max is found
-  return(row_col_max)
-}
-col_max_row <- unlist(lapply(col_max, which_row_col_max) )
-
-# Sort column maximums on corresponding row number, get the column order from that 
-cols_sorted <- seq(1:length(col_max_row))[order(col_max_row)]
-
-# Sort data columns based on this list
-dat_clustered_sorted <- dat_clustered[, cols_sorted]
-
-```
-
-# Get the coefficients sorted in the same way and with the same values removed, and get the absolute value.
-
-```{r}
-coeffs_fltr_srt <- coeff_HepG2andK562[match(row.names(dat_clustered_sorted), row.names(coeff_HepG2andK562)), match(colnames(dat_clustered_sorted), colnames(coeff_HepG2andK562))]
-coeffs_FDR <- data.matrix(coeffs_fltr_srt)
-coeffs_FDR <- abs(coeffs_FDR)
-```
-
-# Also get back the signed log10(p-values) and sort in the same way
-
-```{r}
-signed_log_pval_HepG2andK562 <- signed_log_pval_HepG2andK562[match(row.names(dat_clustered_sorted), row.names(coeff_HepG2andK562)), match(colnames(dat_clustered_sorted), colnames(coeff_HepG2andK562))]
-signed_log_pval_HepG2andK562 <- data.matrix(signed_log_pval_HepG2andK562)
-```
-
-# Melt dataframes and combine in preparation for making the heatmap
-
-```{r}
-signed_log_pval_HepG2andK562 <- as.data.frame(cbind(row.names(signed_log_pval_HepG2andK562), signed_log_pval_HepG2andK562))
-row.names(signed_log_pval_HepG2andK562) <- NULL
-colnames(signed_log_pval_HepG2andK562)[1] <- "RBP KD samples"
-pval_melt <- melt(signed_log_pval_HepG2andK562, id.vars = "RBP KD samples")
-names(pval_melt)[2:3] <- c("miRNAs", "signedLog10pval")
-
-coeffs_FDR <- as.data.frame(cbind(row.names(coeffs_FDR), coeffs_FDR))
-row.names(coeffs_FDR) <- NULL
-colnames(coeffs_FDR)[1] <- "RBP KD samples"
-coeffs_melt <- melt(coeffs_FDR, id.vars = "RBP KD samples")
-names(coeffs_melt)[2:3] <- c("miRNAs", "coeffs")
-
-dat_htmp <- cbind(pval_melt, coeffs_melt$coeffs)
-colnames(dat_htmp)[4] <- "coeffs"
-dat_htmp$signedLog10pval <- as.numeric(as.vector(dat_htmp$signedLog10pval))
-dat_htmp$coeffs <- as.numeric(as.vector(dat_htmp$coeffs))
-
-dat_htmp$`RBP KD samples` <- factor(dat_htmp$`RBP KD samples`, levels = as.character(signed_log_pval_HepG2andK562$`RBP KD samples`))
-dat_htmp$miRNAs <- factor(dat_htmp$miRNAs, levels = as.character(colnames(signed_log_pval_HepG2andK562)))
-
-```
-
-# Reformat sample names 
-
-```{r}
-rowNames <- extract_string(as.vector(signed_log_pval_HepG2andK562$`RBP KD samples`), 1, 4)
-rowNames[grep("_11_", rowNames)] <- paste(rowNames[grep("_11_", rowNames)], "_rep1", sep="")
-rowNames[grep("_21_", rowNames)] <- paste(rowNames[grep("_21_", rowNames)], "_rep2", sep="")
-rowNames <- gsub("_21_", "_", rowNames)
-rowNames <- gsub("_11_", "_", rowNames)
-rowNames <- gsub("_[^_]+_", "_", rowNames)
-```
-
-# The coefficients are represent ln(FC) of miRNA activity right now. Convert to log2 scale.
-
-```{r}
-dat_htmp$coeffs <- log2(exp(dat_htmp$coeffs))
-```
-
-# Replace with correct names of the miRNA familes
-
-```{r}
-lbls <- dat_htmp$miRNAs
-lbls <- gsub("miR-33ab$", "miR-33-5p", lbls)
-lbls <- gsub("miR-26ab$", "miR-26-5p", lbls)
-lbls <- gsub("miR-29abcd$", "miR-29-3p", lbls)
-lbls <- gsub("miR-27abc$", "miR-27-3p", lbls)
-lbls <- gsub("miR-133abc$", "miR-133-3p", lbls)
-lbls <- gsub("miR-199ab-5p$", "miR-199-5p", lbls)
-lbls <- gsub("miR-376abd$", "miR-376-3p", lbls)
-lbls <- gsub("miR-23abc$", "miR-23-3p", lbls)
-lbls <- gsub("miR-19ab$", "miR-19-3p", lbls)
-lbls <- gsub("miR-182$", "miR-182-5p", lbls)
-lbls <- gsub("miR-758$", "miR-758-3p", lbls)
-lbls <- gsub("miR-22$", "miR-22-3p", lbls)
-lbls <- gsub("miR-150$", "miR-150-5p", lbls)
-lbls <- gsub("miR-124$", "miR-124-3p", lbls)
-lbls <- gsub("miR-96$", "miR-96-5p", lbls)
-lbls <- gsub("miR-370$", "miR-370-3p", lbls)
-lbls <- gsub("miR-17$", "miR-17-5p", lbls)
-lbls <- gsub("miR-218$", "miR-218-5p", lbls)
-lbls <- gsub("miR-21$", "miR-21-5p", lbls)
-lbls <- gsub("miR-25$", "miR-25-3p", lbls)
-lbls <- gsub("miR-376c$", "miR-376c-3p", lbls)
-lbls <- gsub("miR-10abc$", "miR-10-5p", lbls)
-lbls <- gsub("miR-143$", "miR-143-3p", lbls)
-lbls <- gsub("miR-34ac$", "miR-34-5p", lbls)
-lbls <- gsub("miR-338$", "miR-338-3p", lbls)
-lbls <- gsub("miR-377$", "miR-377-3p", lbls)
-lbls <- gsub("miR-495$", "miR-495-3p", lbls)
-lbls <- gsub("miR-544$", "miR-544a-3p", lbls)
-lbls <- gsub("miR-18ab$", "miR-18-5p", lbls)
-lbls <- gsub("miR-299$", "miR-299-3p", lbls)
-lbls <- gsub("miR-328a$", "miR-328-3p", lbls)
-dat_htmp$miRNAs <- lbls
-```
-
-# Set the p-value and regression coefficient limits for the heatmap color scales
-
-```{r}
-pval_lim <- 5
-dat_htmp$signedLog10pval[dat_htmp$signedLog10pval > pval_lim] <- pval_lim
-dat_htmp$signedLog10pval[dat_htmp$signedLog10pval < -pval_lim] <- -pval_lim
-coeff_lim <- 0.35
-dat_htmp$coeffs[dat_htmp$coeffs > coeff_lim] <- coeff_lim
-dat_htmp$miRNAs <- factor(dat_htmp$miRNAs, levels=unique(dat_htmp$miRNAs))
-```
-
-# Make the heatmap
-
-```{r}
-pdf(here("ENCODE_RBP_KD", "output", "figures", "miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted.pdf"), width = 15, height = 35)
-ggplot(dat_htmp) +
-geom_point(aes(
-  x = miRNAs, 
-  size = coeffs, 
-  fill = signedLog10pval,
-  shape = 21, 
-  color = "transparent",
-  y = factor(`RBP KD samples`, levels = rev(as.character(signed_log_pval_HepG2andK562$`RBP KD samples`))))) +
-scale_shape_identity() +
-scale_colour_manual(values=c("transparent", "transparent"))+
-scale_y_discrete(label = rev(rowNames)) +
-scale_fill_gradient2(limits=c(-pval_lim,pval_lim), low="blue", mid="white", high="red") +  # oob=squish
-scale_size("miRNA activity",range = c(0.5, 8), breaks = seq(0, coeff_lim, 0.05), limits=c(0, coeff_lim))+
-labs(x="miRNAs",y="RBP KD samples") +
-theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=20), axis.text = element_text(size=14), axis.text.x = element_text(angle=90, size=16, vjust=0.5, hjust=1),legend.position="left", panel.background = element_rect(fill = 'white', colour = 'white'))
 dev.off()
 ```
 
-# And make a dendrogram for the heatmap that can be manually added
+# Create dendrogram figure
 
 ```{r}
-pdf(here("ENCODE_RBP_KD", "output", "figures", "miRs-RBPs_heatmap_signedPvaluesANDcoeff_HepG2andK562_allRepsAndCellsOfsigHits_sorted_dendrogram.pdf"), width = 10, height = 3)
-hc <- as.hclust( htmp$rowDendrogram )
-plot(hc, hang = -1, cex.lab=0.5, cex=0.2, xlab="")
+pdf(here("ENCODE_RBP_KD", "output", "figures",
+         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits_dendrogram.pdf"),
+    width = 10, height = 3)
+
+plot(hc, hang = -1, cex.lab = 0.5, cex = 0.2, xlab = "")
+
 dev.off()
 ```
 
 ```{r}
 sessionInfo()
 ```
-
-
