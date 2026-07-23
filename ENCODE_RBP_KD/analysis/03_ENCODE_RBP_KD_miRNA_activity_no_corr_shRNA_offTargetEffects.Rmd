@@ -186,17 +186,47 @@ glm_results$RBP <- str_split_i(glm_results$sample_name, "_", 2)
 write.csv(glm_results, file = here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_miRNA_activity_noCorrOffTargetEffects.csv"), row.names = FALSE)
 ```
 
-# Identify significant interactions
-
-Find RBP-miRNA pairs with FDR < 0.05 in at least one sample
+# Identify RBP-miRNA pairs with FDR < 0.05 in at least one sample of at least one cell line
 
 ```{r}
 significant_interactions <- glm_results |>
   filter(FDR < 0.05) |>
-  distinct(RBP, miRNA) |>
-  mutate(is_significant = TRUE)
+  distinct(RBP, miRNA, cell_line) 
 
 significant_interactions
+
+nrow(unique(significant_interactions[, colnames(significant_interactions) != "cell_line"]))
+```
+
+# For these candidate interactions, verify that all activity changes estimates have the same sign across all samples where the RBP is KD, within the corresponding cell line, and retrive the types of interactions
+
+```{r}
+sign_check <- significant_interactions %>%
+  inner_join(
+    glm_results %>%
+      select(RBP, miRNA, cell_line, coefficient),
+    by = c("RBP", "miRNA", "cell_line")
+  ) %>%
+  group_by(RBP, miRNA, cell_line) %>%
+  summarise(
+    n = n(),
+    n_signs = n_distinct(sign(coefficient)),
+    all_same_sign = n_signs == 1,
+    Type = case_when(
+      all_same_sign & first(sign(coefficient)) > 0 ~ "+",
+      all_same_sign & first(sign(coefficient)) < 0 ~ "-",
+      TRUE ~ "mixed"
+    ),
+    .groups = "drop"
+  )
+
+sign_check
+
+stopifnot(all(sign_check$all_same_sign == T))
+
+candidate_interactions <- sign_check[sign_check$all_same_sign == T, c("RBP", "miRNA", "cell_line", "Type")]
+
+saveRDS(candidate_interactions, here("ENCODE_RBP_KD", "output", "rds", "ENCODE_RBP_KD_initial_interactions.rds"))
 ```
 
 # Prepare data for heatmap
@@ -220,11 +250,16 @@ make_matrix <- function(data, value_col) {
 heatmap_all <- make_matrix(glm_results, coefficient)
 
 # Matrix for display: non-significant interactions set to zero
+significant_pairs <- candidate_interactions |>
+  distinct(RBP, miRNA)
+
 heatmap_display <- glm_results |>
-  left_join(significant_interactions,
-            by = c("RBP", "miRNA")) |>
+  left_join(
+    significant_pairs |> mutate(significant = TRUE),
+    by = c("RBP", "miRNA")
+  ) |>
   mutate(
-    coefficient = if_else(is.na(is_significant), 0, coefficient)
+    coefficient = if_else(is.na(significant), 0, coefficient)
   ) |>
   select(sample_name, miRNA, coefficient) |>
   pivot_wider(
