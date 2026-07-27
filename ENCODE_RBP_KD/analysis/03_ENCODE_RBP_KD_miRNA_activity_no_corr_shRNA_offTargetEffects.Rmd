@@ -198,23 +198,25 @@ significant_interactions
 nrow(unique(significant_interactions[, colnames(significant_interactions) != "cell_line"]))
 ```
 
-# For these candidate interactions, verify that all activity changes estimates have the same sign across all samples where the RBP is KD, within the corresponding cell line, and retrive the types of interactions
+# For these candidate interactions, verify that all activity changes estimates have the same sign across all samples where the RBP is KD, within the corresponding cell line, and retrieve the types of interactions
 
 ```{r}
-sign_check <- significant_interactions %>%
+sign_check <- significant_interactions |>
   inner_join(
-    glm_results %>%
+    glm_results |>
       select(RBP, miRNA, cell_line, coefficient),
     by = c("RBP", "miRNA", "cell_line")
-  ) %>%
-  group_by(RBP, miRNA, cell_line) %>%
+  ) |>
+  group_by(RBP, miRNA, cell_line) |>
   summarise(
     n = n(),
     n_signs = n_distinct(sign(coefficient)),
     all_same_sign = n_signs == 1,
     Type = case_when(
-      all_same_sign & first(sign(coefficient)) > 0 ~ "+",
-      all_same_sign & first(sign(coefficient)) < 0 ~ "-",
+      # If miRNA activity is up when RBP is KD, it means that the RBP normally inhibits the miRNA
+      all_same_sign & first(sign(coefficient)) > 0 ~ "-",
+      # If miRNA activity is down when RBP is KD, it means that the RBP normally increases the activity of the miRNA
+      all_same_sign & first(sign(coefficient)) < 0 ~ "+",
       TRUE ~ "mixed"
     ),
     .groups = "drop"
@@ -331,7 +333,7 @@ plot_data <- glm_results |>
 
 ```{r}
 pdf(here("ENCODE_RBP_KD", "output", "figures", 
-         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits.pdf"),
+         "ENCODE_RBP_KD_interactions_noCorrOffTargetEffects_heatmap_allRepsAndCellsOfsigHits.pdf"),
     width = 15, height = 35)
 
 ggplot(plot_data) +
@@ -363,7 +365,7 @@ dev.off()
 
 ```{r}
 pdf(here("ENCODE_RBP_KD", "output", "figures",
-         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits_dendrogram.pdf"),
+         "ENCODE_RBP_KD_interactions_noCorrOffTargetEffects_heatmap_allRepsAndCellsOfsigHits_dendrogram.pdf"),
     width = 10, height = 3)
 
 plot(hc, hang = -1, cex.lab = 0.5, cex = 0.2, xlab = "")

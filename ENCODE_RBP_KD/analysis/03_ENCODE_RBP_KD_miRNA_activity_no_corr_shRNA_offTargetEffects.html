@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Inferring miRNA activity in ENCODE RBP KD samples (without correction for shRNA off-target effects)</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-July-22</h4>
+<h4 class="date">2026-July-24</h4>
 
 </div>
 
@@ -2017,22 +2017,24 @@ significant_interactions</code></pre>
 <pre class="r"><code>nrow(unique(significant_interactions[, colnames(significant_interactions) != &quot;cell_line&quot;]))</code></pre>
 <pre><code>## [1] 59</code></pre>
 </div>
-<div id="for-these-candidate-interactions-verify-that-all-activity-changes-estimates-have-the-same-sign-across-all-samples-where-the-rbp-is-kd-within-the-corresponding-cell-line-and-retrive-the-types-of-interactions" class="section level1" number="10">
-<h1><span class="header-section-number">10</span> For these candidate interactions, verify that all activity changes estimates have the same sign across all samples where the RBP is KD, within the corresponding cell line, and retrive the types of interactions</h1>
-<pre class="r"><code>sign_check &lt;- significant_interactions %&gt;%
+<div id="for-these-candidate-interactions-verify-that-all-activity-changes-estimates-have-the-same-sign-across-all-samples-where-the-rbp-is-kd-within-the-corresponding-cell-line-and-retrieve-the-types-of-interactions" class="section level1" number="10">
+<h1><span class="header-section-number">10</span> For these candidate interactions, verify that all activity changes estimates have the same sign across all samples where the RBP is KD, within the corresponding cell line, and retrieve the types of interactions</h1>
+<pre class="r"><code>sign_check &lt;- significant_interactions |&gt;
   inner_join(
-    glm_results %&gt;%
+    glm_results |&gt;
       select(RBP, miRNA, cell_line, coefficient),
     by = c(&quot;RBP&quot;, &quot;miRNA&quot;, &quot;cell_line&quot;)
-  ) %&gt;%
-  group_by(RBP, miRNA, cell_line) %&gt;%
+  ) |&gt;
+  group_by(RBP, miRNA, cell_line) |&gt;
   summarise(
     n = n(),
     n_signs = n_distinct(sign(coefficient)),
     all_same_sign = n_signs == 1,
     Type = case_when(
-      all_same_sign &amp; first(sign(coefficient)) &gt; 0 ~ &quot;+&quot;,
-      all_same_sign &amp; first(sign(coefficient)) &lt; 0 ~ &quot;-&quot;,
+      # If miRNA activity is up when RBP is KD, it means that the RBP normally inhibits the miRNA
+      all_same_sign &amp; first(sign(coefficient)) &gt; 0 ~ &quot;-&quot;,
+      # If miRNA activity is down when RBP is KD, it means that the RBP normally increases the activity of the miRNA
+      all_same_sign &amp; first(sign(coefficient)) &lt; 0 ~ &quot;+&quot;,
       TRUE ~ &quot;mixed&quot;
     ),
     .groups = &quot;drop&quot;
@@ -2042,16 +2044,16 @@ sign_check</code></pre>
 <pre><code>## # A tibble: 68 × 7
 ##    RBP   miRNA      cell_line     n n_signs all_same_sign Type 
 ##    &lt;chr&gt; &lt;chr&gt;      &lt;chr&gt;     &lt;int&gt;   &lt;int&gt; &lt;lgl&gt;         &lt;chr&gt;
-##  1 AARS  miR-338-3p HepG2         2       1 TRUE          +    
-##  2 AATF  miR-455-5p HepG2         2       1 TRUE          +    
-##  3 ABCF1 miR-33a-3p HepG2         2       1 TRUE          +    
-##  4 AKAP1 miR-370-3p K562          2       1 TRUE          +    
-##  5 BCCIP miR-33-5p  HepG2         2       1 TRUE          +    
-##  6 CKAP4 miR-495-3p HepG2         2       1 TRUE          +    
-##  7 CPSF6 miR-150-5p K562          2       1 TRUE          +    
-##  8 CSTF2 miR-10-5p  HepG2         2       1 TRUE          +    
-##  9 CSTF2 miR-10-5p  K562          2       1 TRUE          +    
-## 10 DDX55 miR-29-3p  HepG2         2       1 TRUE          +    
+##  1 AARS  miR-338-3p HepG2         2       1 TRUE          -    
+##  2 AATF  miR-455-5p HepG2         2       1 TRUE          -    
+##  3 ABCF1 miR-33a-3p HepG2         2       1 TRUE          -    
+##  4 AKAP1 miR-370-3p K562          2       1 TRUE          -    
+##  5 BCCIP miR-33-5p  HepG2         2       1 TRUE          -    
+##  6 CKAP4 miR-495-3p HepG2         2       1 TRUE          -    
+##  7 CPSF6 miR-150-5p K562          2       1 TRUE          -    
+##  8 CSTF2 miR-10-5p  HepG2         2       1 TRUE          -    
+##  9 CSTF2 miR-10-5p  K562          2       1 TRUE          -    
+## 10 DDX55 miR-29-3p  HepG2         2       1 TRUE          -    
 ## # ℹ 58 more rows</code></pre>
 <pre class="r"><code>stopifnot(all(sign_check$all_same_sign == T))
 
@@ -2158,7 +2160,7 @@ plot_data &lt;- glm_results |&gt;
 <div id="create-heatmap" class="section level1" number="12">
 <h1><span class="header-section-number">12</span> Create heatmap</h1>
 <pre class="r"><code>pdf(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;figures&quot;, 
-         &quot;ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits.pdf&quot;),
+         &quot;ENCODE_RBP_KD_interactions_noCorrOffTargetEffects_heatmap_allRepsAndCellsOfsigHits.pdf&quot;),
     width = 15, height = 35)
 
 ggplot(plot_data) +
@@ -2190,7 +2192,7 @@ dev.off()</code></pre>
 <div id="create-dendrogram-figure" class="section level1" number="13">
 <h1><span class="header-section-number">13</span> Create dendrogram figure</h1>
 <pre class="r"><code>pdf(here(&quot;ENCODE_RBP_KD&quot;, &quot;output&quot;, &quot;figures&quot;,
-         &quot;ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfsigHits_dendrogram.pdf&quot;),
+         &quot;ENCODE_RBP_KD_interactions_noCorrOffTargetEffects_heatmap_allRepsAndCellsOfsigHits_dendrogram.pdf&quot;),
     width = 10, height = 3)
 
 plot(hc, hang = -1, cex.lab = 0.5, cex = 0.2, xlab = &quot;&quot;)
