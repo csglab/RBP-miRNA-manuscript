@@ -10,3 +10,7 @@ renv/staging/
 # optional cache
 renv/cache/
 .posit/assistant
+
+# Large files
+ENCODE_RBP_KD/data/BETAS.ddf.filtered.allSamples.txt
+ENCODE_RBP_KD/data/BETAS.dfi.allSamples.txt

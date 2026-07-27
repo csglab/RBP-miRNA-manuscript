@@ -238,6 +238,8 @@ new_ints <- unique(new_ints_allReps[, c("RBP","miRNA", "cell_line", "Type")])
 dim(new_ints)
 
 new_ints
+
+saveRDS(new_ints, here("ENCODE_RBP_KD", "output", "rds", "ENCODE_RBP_KD_interactions.rds"))
 ```
 
 # Prepare data for heatmap
@@ -337,12 +339,8 @@ plot_data <- glm_results |>
 
 # Create heatmap
 
-```{r}
-pdf(here("ENCODE_RBP_KD", "output", "figures", 
-         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfcandidates.pdf"),
-    width = 15, height = 35)
-
-ggplot(plot_data) +
+```{r, fig.dim = c(15, 35), fig.align = 'center'}
+p <- ggplot(plot_data) +
   geom_point(aes(
     x = miRNA,
     y = fct_rev(sample_name),
@@ -368,7 +366,12 @@ ggplot(plot_data) +
     legend.position = "left",
     panel.background = element_rect(fill = "white", colour = "white")
   )
+p
 
+pdf(here("ENCODE_RBP_KD", "output", "figures", 
+         "ENCODE_RBP_KD_interactions_heatmap_allRepsAndCellsOfcandidates.pdf"),
+    width = 15, height = 35)
+p
 dev.off()
 
 length(unique(plot_data$miRNA))

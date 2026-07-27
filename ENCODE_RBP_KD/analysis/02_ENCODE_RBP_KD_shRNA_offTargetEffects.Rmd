@@ -69,19 +69,9 @@ UTR_K562_fltr <- UTR_seq[common_genes_K562]
 stab_K562_fltr <- stab_K562[common_genes_K562, ]
 ```
 
-# Summary of steps to identify shRNA positions associated with off-target effects and correct stability estimates for these off-target effects
-
-1. Test associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability:
-    - For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3'UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers. Retain regression coefficients and P-values
-2. Identify positions of shRNAs that are predictive of stability changes:
-  - Multiple testing corrections for P-values obtained at step 1 
-  - Filter for significant hits
-  - For each shRNA position, determine if there are more significant hits than expected by chance (Fisher’s test)
-  - Repeat for 6-mers and 7-mers separately
-3. Correct stability estimates for shRNA off-target effects 
-  - Using a regression with 6-mer and 7-mer counts from the positions associated with off-target effects as predictors, retain residuals as corrected stability data
-
 # Test associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability
+
+For each cell line, for each sample (and so for each shRNA), use a 6nt/7nt-length sliding window to get all 6nt/7nt sequences in the shRNA and count their occurrence in the 3'UTRs. Then we assess the associations between counts of shRNA 6-mers/7-mers in 3'UTRs and mRNA stability (bias- and batch-corrected). We do this separately for 6-mers and 7-mers. Retain regression coefficients and P-values
 
 ```{r}
 # Helper function to reverse-complement shRNA sequence to obtain the genomic target sequence
@@ -215,7 +205,7 @@ saveRDS(regression_results, here("ENCODE_RBP_KD", "output", "rds", "regression_r
 
 We visualize which shRNA positions (1-54) are most predictive of mRNA stability changes.
 
-```{r}
+```{r, fig.dim = c(7, 2), fig.align = 'center'}
 for(len in c(6, 7)) {
   # Extract regression results for the kmer length
   results_key <- paste0("len_", len)
@@ -251,6 +241,11 @@ for(len in c(6, 7)) {
   # Generate heatmap
   palette <- colorRampPalette(c("blue", "white", "red"))
   tryCatch({
+    heatmap.2(slog10pvals, trace = "none", col = palette, cexRow = 0.001, cexCol = 0.5,
+              breaks = seq(-10, 10, length.out = 100), mar = c(2, 2), key = FALSE, Colv = FALSE,
+              hclust = function(x) hclust(x, method = "complete"), 
+              distfun = function(x) as.dist((1 - cor(t(x))) / 2), 
+              density.info = "none", lwid = c(1, 10))
     pdf(here("ENCODE_RBP_KD", "output", "figures", 
              paste("ENCODE_RBP_KD_shRNA_", len, "mers_positions_vsStab_signedlog10pvals.pdf", sep="")), 
         height = 2, width = 7)
@@ -269,7 +264,10 @@ We see that for 6-mers (top), positions 34-38 on shRNAs are associated with decr
 
 # Identify positions of shRNAs that are predictive of stability changes (Fisher's exact test)
 
-Using a Fisher's test to determine for each position, if there are more significant associations (FDR < 0.05) that we would expect by chance. Repeat separately for the coefficients of 6-mers and 7-mers. Then in the regression to correct stability estimates, only use the 6-mers and 7-mers of these positions.
+- Multiple testing corrections for P-values obtained at step 1 
+- Filter for significant hits
+- For each shRNA position, determine if there are more significant hits than expected by chance (Fisher’s test)
+- Repeat for 6-mers and 7-mers separately
 
 ```{r}
 
