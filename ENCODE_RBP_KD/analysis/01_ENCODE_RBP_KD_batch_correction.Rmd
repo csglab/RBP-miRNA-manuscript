@@ -24,7 +24,7 @@ library(MASS)
 library(gplots)
 ```
 
-# Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS. 
+# Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS 
 
 These were previously filtered to remove estimates with stdev > 0.5 (which were replaced with NA).
 
