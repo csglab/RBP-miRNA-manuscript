@@ -1,0 +1,256 @@
+---
+title: "Inferrence of mRNA stability and miRNA activity across tissues and cell lines from ENCODE"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+set.seed(1)
+```
+
+# Load libraries
+
+```{r}
+library(MASS)
+library(data.table)
+library(tidyverse)
+```
+
+# Load the ddf (estimates of changes in stability), ddf_stdev (standard deviations) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS 
+
+```{r, echo = F}
+# Helper function to load and convert BETAS data 
+load_betas_data <- function(filename) {
+  fread(here("ENCODE_tissues_cell_lines", "data", filename)) |>
+    column_to_rownames(var = "V1") |>
+    data.matrix()
+}
+
+ddf <- load_betas_data("ENCODE_totalRNA-seq.BETAS_ddf.csv")
+ddf_stdev <- load_betas_data("ENCODE_totalRNA-seq.BETAS_ddf_stdev.csv")
+dfi <- load_betas_data("ENCODE_totalRNA-seq.BETAS_dfi.csv")
+```
+
+# Define std cutoff to retain closest to 10,000 genes as possible, and apply that filter
+
+```{r}
+dim(ddf)
+
+# Helper function to find cutoff that retains ~10,000 genes
+find_optimal_cutoff <- function(data, stdev, row_threshold = 0.8, col_threshold = 0.2, target_genes = 10000, increment = 0.05) {
+  cutoff <- 0.1
+  data_filtered <- NULL
+  data_with_rows_kept <- NULL
+  
+  while (TRUE) {
+    cat("Cutoff being tested:", cutoff, "\n")
+    
+    # Mask low-confidence values
+    data_masked <- data
+    data_masked[stdev > cutoff] <- NA
+    
+    # Keep rows (genes) with at least 80% non-NA values 
+    row_data_completeness <- rowSums(!is.na(data_masked)) / ncol(data_masked)
+    passing_rows <- which(row_data_completeness >= row_threshold)
+    data_with_rows_kept <- data_masked[passing_rows, ]
+    
+    # Remove samples (columns) with > 20% NAs
+    col_data_completeness <- colSums(is.na(data_with_rows_kept)) / nrow(data_with_rows_kept)
+    passing_cols <- col_data_completeness <= col_threshold
+    data_filtered <- data_with_rows_kept[, passing_cols]
+    
+    n_genes <- nrow(data_filtered)
+    
+    if (n_genes >= target_genes) break
+    cutoff <- cutoff + increment
+  }
+  
+  # Return the first cutoff that retains at least the target number of genes
+  final_cutoff <- cutoff
+  removed_samples <- colnames(data_with_rows_kept)[!colnames(data_with_rows_kept) %in% colnames(data_filtered)]
+  
+  list(data = data_filtered, cutoff = final_cutoff, n_genes = n_genes, 
+       removed_samples = removed_samples)
+}
+
+cutoff_result <- find_optimal_cutoff(ddf, ddf_stdev)
+ddf_fltr <- cutoff_result$data
+cutoff <- cutoff_result$cutoff
+
+cat("Final cutoff:", cutoff, "\n")
+cat("Number of genes remaining:", cutoff_result$n_genes, "\n")
+
+# Filter dfi to keep same genes and samples as ddf_fltr
+dfi_fltr <- dfi[rownames(ddf_fltr), colnames(ddf_fltr)]
+
+cat("ddf_fltr dimensions:", nrow(ddf_fltr), "x", ncol(ddf_fltr), "\n")
+cat("dfi_fltr dimensions:", nrow(dfi_fltr), "x", ncol(dfi_fltr), "\n")
+```
+
+# Load the sample metadata
+
+```{r}
+met <- read.table(here("ENCODE_tissues_cell_lines", "data", "ENCODE_total_RNA-seq_experiments_metadata.txt"), header = F)
+```
+
+# Bias correction of differential stability estimates
+
+Fit a robust linear regression for each gene, modelling stability changes (ddf) as a function of transcriptional changes (dfi), and retain the residuals as bias-corrected stability estimates
+
+```{r}
+stab_cor <- do.call(rbind, lapply(seq_len(nrow(ddf_fltr)), function(i) {
+  fit <- rlm(ddf_fltr[i,] ~ dfi_fltr[i,], na.action=na.exclude, maxit=200)
+  residuals(fit)
+}))
+
+rownames(stab_cor) <- rownames(ddf_fltr)
+colnames(stab_cor) <- colnames(ddf_fltr)
+```
+
+# Save the bias-corrected stability data
+
+```{r}
+write.csv(stab_cor, here("ENCODE_tissues_cell_lines", "output", "supplementary_tables", "ENCODE_tissues_cell_lines_stability_bias_corr.csv"))
+```
+
+# Load the 3'UTR nucleotide composition and length annotations, and miRNA seed matches
+
+```{r}
+UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
+# miR_binding <- read.table(here("ENCODE_tissues_cell_lines", "data", "3UTR_miRNA_affinity_new.txt"), , header = TRUE, row.names = NULL)
+miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
+```
+
+# Prepare GLM data
+
+Merge 3'UTR annotations with stability data 
+
+```{r}
+stab_cor <- as.data.frame(stab_cor) |>
+  rownames_to_column(var = "Gene_id")
+UTR <- merge(UTR_nt, UTR_length, by=1)
+UTR_miRNA <- merge(UTR, miR_binding, by=1)
+glmMatrix <- merge(stab_cor, UTR_miRNA, by=1)
+```
+
+# Remove columns that are only NAs
+
+```{r}
+glmMatrix <- glmMatrix |>
+    select(where(~ !all(is.na(.))))
+```
+
+# Fit GLM models 
+
+Run GLM for each sample, extracting coefficients and P-values
+
+```{r}
+fit_glm_sample <- function(glm_data, sample_name) {
+  # glm_data: complete data frame with response and all predictors
+  # sample_name: name of the sample 
+  
+  predictor_names <- names(glm_data)[
+    names(glm_data) != "Gene_id" &
+      !grepl("ENCSR", names(glm_data))
+  ]
+  # Formula: response ~ confounders and miRNA affinity predictors
+  # Intercept included automatically
+  formula_str <- paste0(
+    sample_name,
+    " ~ ",
+    paste(predictor_names, collapse = " + ")
+  )
+  
+  fit <- glm(as.formula(formula_str), data = glm_data, na.action = na.exclude)
+  coef_summary <- coef(summary(fit))
+  
+  # Extract coefficients and p-values for predictors only (miRNA cols, skip intercept and confounders)
+  predictor_rows <- which(grepl("^(miR\\.|let\\.)", rownames(coef_summary)))
+  
+  tibble(
+    miRNA = rownames(coef_summary)[predictor_rows],
+    coefficient = coef_summary[predictor_rows, 1],
+    pvalue = coef_summary[predictor_rows, 4],
+    sample_name = sample_name
+  )
+}
+
+# Apply to all samples in the stability data
+glm_results <-
+    map_dfr(
+        colnames(stab_cor)[-1],
+        ~ fit_glm_sample(glmMatrix, .x)
+    )
+```
+
+# Convert inferred target stability effects into miRNA activity estimates by reversing the coefficient sign, express coefficients on a log2 scale
+
+```{r}
+glm_results <- glm_results |>
+  mutate(
+    coefficient = -coefficient,
+    coefficient_log2 = log2(exp(coefficient))
+  )
+
+head(glm_results)
+```
+
+# Multiple testing correction 
+
+```{r}
+glm_results <- glm_results |>
+  mutate(FDR = p.adjust(pvalue, method = "fdr"))
+```
+
+# Reformat miRNA names
+
+```{r}
+glm_results$miRNA <- gsub("\\.[A-Z].*", "", glm_results$miRNA)
+glm_results$miRNA <- gsub("_.*", "", glm_results$miRNA)
+glm_results$miRNA <- gsub("\\.", "-", glm_results$miRNA)
+
+# Define mapping from original names to canonical names
+mirna_name_mapping <- tibble(
+  original = c(
+    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
+    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
+    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
+    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
+    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
+    "miR-18ab", "miR-299", "miR-328a", "let-7"
+  ),
+  canonical = c(
+    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
+    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
+    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
+    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
+    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
+    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
+    "miR-328-3p", "let-7"
+  )
+)
+
+glm_results <- glm_results |>
+  left_join(mirna_name_mapping, by = c("miRNA" = "original")) |>
+  mutate(miRNA = coalesce(canonical, miRNA)) |>
+  select(-canonical)
+```
+
+# Save results
+
+```{r}
+# Save all results in long-format tibble 
+write.csv(glm_results, file = here("ENCODE_tissues_cell_lines", "output", "supplementary_tables", "ENCODE_tissues_cell_lines_miRNA_activity.csv"), row.names = FALSE)
+```
+
+```{r}
+sessionInfo()
+```

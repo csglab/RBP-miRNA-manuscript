@@ -14,3 +14,4 @@ renv/cache/
 # Large files
 ENCODE_RBP_KD/data/BETAS.ddf.filtered.allSamples.txt
 ENCODE_RBP_KD/data/BETAS.dfi.allSamples.txt
+ENCODE_tissues_cell_lines/data/ENCODE_total_RNA-seq_gene_FPKM.csv
