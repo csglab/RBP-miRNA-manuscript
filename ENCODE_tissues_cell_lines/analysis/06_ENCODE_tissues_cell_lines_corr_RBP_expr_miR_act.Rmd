@@ -167,13 +167,29 @@ corr_table <- miRNA_RBPs |>
   ) |>
   as.data.frame()
 
-# Color labels according to the interaction sign inferred from the RBP knockdown analysis
-cols <- ifelse(corr_table$sign == "-", "darkblue", "red")
+# Number of candidate interactions that show the expected correlation
+nrow(corr_table)
+
+high_conf_ints <- corr_table[(corr_table$sign == "+" & sign(corr_table$correlation_coefficient) == 1) |
+                              (corr_table$sign == "-" & sign(corr_table$correlation_coefficient) == -1), ]
+nrow(high_conf_ints)
+
+saveRDS(high_conf_ints, here("ENCODE_tissues_cell_lines", "output", "rds", "ENCODE_tissues_cell_lines_high_conf_ints.rds"))
+
+
+# Number of candidate interactions with significant corration and |r| > 0.2 that show the expected correlation
+top_corr <- corr_table[abs(corr_table$correlation_coefficient) > 0.2 & corr_table$FDR < 0.05, ]
+nrow(top_corr)
+
+nrow(top_corr[top_corr$sign == "+" & sign(top_corr$correlation_coefficient) == 1, ]) + 
+  nrow(top_corr[top_corr$sign == "-" & sign(top_corr$correlation_coefficient) == -1, ])
 ```
 
 # Barplot
 
 ```{r, fig.dim = c(6.6,3.8), fig.align = 'center'}
+# Color labels according to the interaction sign inferred from the RBP knockdown analysis
+cols <- ifelse(corr_table$sign == "-", "darkblue", "red")
 
 pdf(here("ENCODE_tissues_cell_lines", "output", "figures", "ENCODE_tissues_cell_lines_corr_miRs_RBPs.pdf"), height=3.8, width=6.6)
 par(mar=c(7,5,1,1))
