@@ -125,7 +125,6 @@ write.csv(stab_cor, here("ENCODE_tissues_cell_lines", "output", "supplementary_t
 ```{r}
 UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
 UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
-# miR_binding <- read.table(here("ENCODE_tissues_cell_lines", "data", "3UTR_miRNA_affinity_new.txt"), , header = TRUE, row.names = NULL)
 miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
 ```
 

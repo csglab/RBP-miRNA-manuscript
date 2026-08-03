@@ -23,6 +23,9 @@ library(ggplot2)
 library(EnhancedVolcano)
 library(fgsea)
 library(tidyverse)
+library(MASS)
+library(glue)
+library(matrixStats)
 ```
 
 # CRISPR RBP KO sample metadata 
@@ -68,43 +71,46 @@ design(ddsHTSeq) <- ~ group
 ddsHTSeq <- DESeq(ddsHTSeq)
 
 # Extract and name DESeq results for a given RBP
-extract_deseq_results <- function(dds, rbp_name, gene_id) {
+extract_deseq_results <- function(dds, rbp_name) {
   res <- as.data.frame(results(dds, contrast = c("group", rbp_name, "empty")))
   res
 }
 
 res_lst <- list(
-  DDX55_KOvsEmpty = extract_deseq_results(ddsHTSeq, "DDX55", "ENSG00000111364"),
-  PTBP1_KOvsEmpty = extract_deseq_results(ddsHTSeq, "PTBP1", "ENSG00000011304"),
-  SUPV3L1_KOvsEmpty = extract_deseq_results(ddsHTSeq, "SUPV3L1", "ENSG00000156502")
+  DDX55_KOvsEmpty = extract_deseq_results(ddsHTSeq, "DDX55"),
+  PTBP1_KOvsEmpty = extract_deseq_results(ddsHTSeq, "PTBP1"),
+  SUPV3L1_KOvsEmpty = extract_deseq_results(ddsHTSeq, "SUPV3L1")
 )
+
+# Save result tables
+res_lst$DDX55_KOvsEmpty <- write.csv(res_lst$DDX55_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_DDX55_KOvsEmpty_DGEA.csv"))
+res_lst$PTBP1_KOvsEmpty <- write.csv(res_lst$PTBP1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_PTBP1_KOvsEmpty_DGEA.csv"))
+res_lst$SUPV3L1_KOvsEmpty <- write.csv(res_lst$SUPV3L1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_SUPV3L1_KOvsEmpty_DGEA.csv"))
 ```
 
 # Prepare normalized counts
 
 ```{r}
-# Center counts by row mean
-center_counts <- function(counts) {
-  t(apply(counts, 1, function(x) x - mean(x)))
-}
-
-norm_counts <- getVarianceStabilizedData(ddsHTSeq)
+# Variance-stabilized counts for visualization
+vsd <- vst(ddsHTSeq, blind = TRUE)
+norm_counts <- assay(vsd)
 ```
 
 # PCA analysis for RBP knockdowns
 
 ```{r, fig.dim = c(4,2.5), fig.align = 'center'}
-# Filter and prepare counts for a specific RBP
-filter_and_normalize_counts <- function(counts, exclude_patterns) {
+# Filter counts for a specific RBP
+filter_counts <- function(counts, exclude_patterns) {
+
   cols_to_remove <- unique(unlist(lapply(
     c("WT", exclude_patterns),
     function(pat) grep(pat, colnames(counts))
   )))
-  
-  counts_filt <- counts[, -cols_to_remove]
-  norm <- center_counts(counts_filt)
-  # Remove rows with all zeros
-  norm[rowSums(norm) > 0, ]
+
+  counts_filt <- counts[, -cols_to_remove, drop = FALSE]
+
+  # Remove genes with zero variance
+  counts_filt[apply(counts_filt, 1, var) > 0, , drop = FALSE]
 }
 
 # Create PCA plot with tidy evaluation
@@ -141,9 +147,10 @@ plot_pca <- function(pca_obj, conditions, color_mapping, title) {
 }
 
 # Wrapper for complete PCA analysis
+# exclude_patterns is a regex
 run_pca <- function(norm_counts, exclude_patterns, rbp_name, color, output_file) {
-  norm_rowAvg <- filter_and_normalize_counts(norm_counts, exclude_patterns)
-  conds <- gsub("_.*", "", colnames(norm_rowAvg))
+  counts_filt <- filter_counts(norm_counts, exclude_patterns)
+  conds <- gsub("_.*", "", colnames(counts_filt))
   conds[grepl("empty", conds)] <- "HEK293T-empty"
   
   color_map <- setNames(
@@ -151,7 +158,11 @@ run_pca <- function(norm_counts, exclude_patterns, rbp_name, color, output_file)
     c(paste0("HEK293T-", rbp_name), "HEK293T-empty")
   )
   
-  pca_obj <- prcomp(t(norm_rowAvg), scale. = FALSE, center = FALSE)
+  pca_obj <- prcomp(
+    t(counts_filt),
+    center = TRUE,
+    scale. = FALSE
+  )
   
   p <- plot_pca(pca_obj, conds, color_map, rbp_name)
   
@@ -198,171 +209,181 @@ plot_volcano(
   "SUPV3L1 KO vs empty vector control",
   here("CRISPR_RBP_KO", "output", "figures", "CRISPR_RBP_KO_volcano_SUPV3L1.pdf")
 )
-
-<== finish reviewing all code above, check why two types of normalized counts used, etc. 
 ```
 
 # Comparison of miRNA target stability/expression in RBP KOs compared to RBP KDs from ENCODE
 
 Density plots comparing DGEA (W/O WT) in the KOs to differential stability in ENCODE KDs, and showing the enrichment of miR binding sites
 
-Load the differential mRNA stability for ENCODE RBP KDs
-
 ```{r}
-stab_HepG2 <- read.csv(paste("RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_HepG2.csv", sep=""), row.names=1)
-stab_K562 <- read.csv(paste("RBPKD_stab_biasCorr_corrShRNA6nts7nts_sigPosFishers_K562.csv", sep=""), row.names=1)
+# Load data and define comparison parameters
+stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_HepG2.csv"), row.names=1)
+stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_K562.csv"), row.names=1)
+miR_int <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE, row.names=1)
+
+# RBP-miRNA comparisons: RBP, miRNA, condition, KD_ID, cell_type, direction
+comp_tbl <- tribble(
+  ~RBP, ~miRNA, ~condition, ~KD_ID, ~cell_type, ~direction,
+  "PTBP1", "miR.29abcd", "PTBP1_KOvsEmpty", "ENCSR064DXG", "HepG2", "-",
+  "SUPV3L1", "miR.19ab", "SUPV3L1_KOvsEmpty", "ENCSR778SIU", "K562", "+",
+  "SUPV3L1", "miR.17", "SUPV3L1_KOvsEmpty", "ENCSR778SIU", "K562", "+"
+)
+
+stab_list <- list(HepG2 = stab_HepG2, K562 = stab_K562)
+cond_name <- "KO vs control"
 ```
 
-Make a list of RBPs, miRNAs, conditions, KD IDs and cell types for the candidates to test
+```{r, fig.width=3.3, fig.height=3}
+# Density comparison plots
+plot_density_comparison <- function(positive_data, negative_data, rbp_name, lims = c(-2, 2, -1.5, 1.5)) {
+  f1 <- MASS::kde2d(as.numeric(positive_data$KO), as.numeric(positive_data$KD), 
+                    lims = lims, n = 500, h = 0.5)
+  f2 <- MASS::kde2d(as.numeric(negative_data$KO), as.numeric(negative_data$KD), 
+                    lims = lims, n = 500, h = 0.5)
+  
+  # Set margins: bottom, left, top, right
+  old_par <- par(mar = c(5, 6.5, 2, 1))
+  on.exit(par(old_par))
+  
+  image(f2$x, f2$y, f1$z - f2$z, 
+        zlim = c(-0.35, 0.35),
+        col = colorRampPalette(c("blue", "white", "red"))(100),
+        xlab = glue("Differential expression\n{cond_name} (log2FC)"),
+        ylab = glue("Differential stability\n{rbp_name} KD (log2FC)"))
+  abline(v = 0, lty = 2, col = "black", lwd = 0.5)
+  abline(h = 0, lty = 2, col = "black", lwd = 0.5)
+  
+  # Return invisible to allow printing
+  invisible(NULL)
+}
 
-```{r}
-comp_lst=list(c("PTBP1", "miR.29abcd", "PTBP1_KOvsEmpty", "ENCSR064DXG", "HepG2", "-"),
-              c("SUPV3L1", "miR.19ab", "SUPV3L1_KOvsEmpty", "ENCSR778SIU", "K562",  "+"),
-              c("SUPV3L1", "miR.17", "SUPV3L1_KOvsEmpty", "ENCSR778SIU", "K562",  "+"))
-
-cond_name <- "KO vs control" 
-```
-
-Load the miRNA predicted binding matrix
-
-```{r}
-miR_int <- read.csv("miRNA_seed_matches_3UTRs2000bp.csv", header=TRUE, row.names=1)
-```
-
-Make density plots showing the change in expression/stability of miRNA targets in the two different RBP inhibition experiments. See specific steps as indicated in the comments within the code.
-
-```{r}
-for (i in 1:length(comp_lst)){
-  # Define the RBP, miRNA, condition and KD
-  RBP = comp_lst[[i]][1]
-  miRNA = comp_lst[[i]][2]
-  cond = comp_lst[[i]][3]
-  KD = comp_lst[[i]][4]
-  cell = comp_lst[[i]][5]
+# Generate density plots
+for (i in seq_len(nrow(comp_tbl))) {
+  params <- comp_tbl[i, ]
+  stab_kd <- stab_list[[params$cell_type]]
   
-  if(cell == "HepG2"){
-    stab_KD = stab_HepG2
-  } else {
-    stab_KD = stab_K562
-  }
-   
-  # Filtering to keep the same genes
-  common_genes <- Reduce(intersect, c(lapply(res_lst, row.names), list(row.names(stab_KD))))
+  # Get common genes across all comparisons
+  common_genes <- Reduce(intersect, c(lapply(res_lst, rownames), list(rownames(stab_kd))))
   
-  # Convert to log2FC
-  stab_KD <- log2(exp(stab_KD))
+  # Compute median KD stability (log2FC) for genes shared with KO analysis
+  stopifnot(length(grep(params$KD_ID, colnames(stab_kd))) > 0)
+  stab_subset <- stab_kd[common_genes, grep(params$KD_ID, colnames(stab_kd)), drop = FALSE]
+  kd_stab <- log2(exp(data.matrix(stab_subset))) |>
+    matrixStats::rowMedians()
   
-  # KD of RBP of interest, medians
-  KD_RBP <- stab_KD[common_genes, grep(KD, colnames(stab_KD))]
-  KD_RBP <- rowMedians(data.matrix(KD_RBP))
+  ko_expr <- res_lst[[params$condition]][common_genes, "log2FoldChange"]
   
-  # KO of RBP of interest
-  KO_RBP <- res_lst[[cond]][common_genes, ]$log2FoldChange
-    
-  # Define miRNA targets
-  targets <- row.names(miR_int)[miR_int[, miRNA] > 0]
+  # Identify miRNA targets
+  targets <- rownames(miR_int)[miR_int[[params$miRNA]] > 0]
   
-  # Make table with median stab changes in both conditions and column indicating if genes are miRNA targets
-  x <- as.data.frame(cbind(common_genes, KD_RBP, KO_RBP))
-  colnames(x)[2:3] <- c("KD", "KO") 
-  x$miR_target <- NA
-  x$miR_target <- as.numeric(x$common_genes %in% targets)
+  # Create comparison table
+  comp_data <- tibble(
+    gene = common_genes,
+    KD = kd_stab,
+    KO = ko_expr,
+    is_target = as.numeric(gene %in% targets)
+  ) |>
+    drop_na()
   
-  # Filter for rows w/o NAs
-  x <- x[rowSums(is.na(x)) == 0, ]
+  # Save density difference plot to PDF
+  pdf(here("CRISPR_RBP_KO", "output", "figures", 
+           glue("CRISPR_RBP_KO_density_{params$RBP}_{params$miRNA}.pdf")),
+      width = 3.3, height = 3)
+  plot_density_comparison(
+    comp_data |> filter(is_target == 1),
+    comp_data |> filter(is_target == 0),
+    params$RBP
+  )
+  dev.off()
   
-  # separate positive cases from negative cases
-  positive <- x[x$miR_target==1,]
-  negative <- x[x$miR_target==0,]
-  
-  # 2D densities of each of positive and negative cases
-  # plot the difference of the densities
-  lims=c(-2,2,-1.5,1.5)
-  f1 <- kde2d(as.numeric(as.vector(positive$KO)), as.numeric(as.vector(positive$KD)), lims=lims,n=500,h=0.5)
-  f2 <- kde2d(as.numeric(as.vector(negative$KO)), as.numeric(as.vector(negative$KD)), lims=lims,n=500,h=0.5)
-  image(f2$x,f2$y,f1$z-f2$z,zlim=c(-0.35,0.35),col=colorRampPalette(c("blue", "white","red"))(100), xlab = paste("Differential expression\n", cond_name, " (log2FC)", sep=""), ylab = paste("Differential stability \n", RBP, " KD (log2FC)", sep="")) +
-  abline(v=0, lty=2, col="black", lwd=0.5) +
-  abline(h=0, lty=2, col="black", lwd=0.5)
+  # Print plot to console
+  plot_density_comparison(
+    comp_data |> filter(is_target == 1),
+    comp_data |> filter(is_target == 0),
+    params$RBP
+  )
 }
 ```
 
 # GSEA for RBP-responsive miRNA targets in the DGEA data of RBP KOs
 
-RBP-responsive miRNA targets = miRNA targets behaving as expected in the KDs.
+RBP-responsive miRNA targets = miRNA targets behaving as expected in the KDs (not KOs).
 
-See the comments within the code for a description of the specific steps.
+```{r, fig.width=3, fig.height=2.5}
+# Test enrichment of RBP-responsive miRNA targets among KO differential expression and plot
+run_gsea_analysis <- function(params, stab_list, res_lst, miR_int) {
+  stab_kd <- stab_list[[params$cell_type]]
+  
+  # Get common genes and prepare data
+  ko_results <- res_lst[[params$condition]][!is.na(res_lst[[params$condition]]$padj), ]
+  stopifnot(
+    all(c("log2FoldChange", "stat", "padj") %in% colnames(ko_results))
+  )
+  common_genes <- intersect(rownames(ko_results), rownames(stab_kd))
+  
+  # Compute stability medians
+  stab_subset <- stab_kd[common_genes, grep(params$KD_ID, colnames(stab_kd)), drop = FALSE]
+  kd_stab <- log2(exp(data.matrix(stab_subset))) |>
+    matrixStats::rowMedians()
+  
+  # Extract stats vector
+  stat <- setNames(ko_results[common_genes, "stat"], 
+                   rownames(ko_results[common_genes, ]))
+  
+  # Identify miRNA targets with expected behavior in KD
+  targets <- rownames(miR_int)[miR_int[[params$miRNA]] > 0]
+  threshold <- 0
+  direction <- if(params$direction=="-") `<` else `>`
+  
+  goi <- tibble(gene = common_genes, kd_stab = kd_stab) |>
+    mutate(is_target = gene %in% targets,
+           behaves_as_expected = is_target & direction(kd_stab, threshold)) |>
+    filter(behaves_as_expected) |>
+    pull(gene)
+  
+  # Run GSEA
+  genelist <- setNames(list(goi), "miRtarsExpChangeKD")
+  gsea_res <- fgsea(pathways = genelist, stats = stat, minSize = 10)
+  
+  # Create plot with annotations
+  p <- fgsea::plotEnrichment(goi, stat, gseaParam = 1, ticksSize = 0.05) +
+    labs(title = glue("{params$RBP} KO - {params$miRNA}"),
+         x = paste("Rank-ordered genes (", length(genelist[[1]]), ")", sep=""), 
+         y = "Enrichment score (ES)")
+  
+  # Get y-axis limits to position annotation at center
+  y_lims <- ggplot_build(p)$layout$panel_scales_y[[1]]$range$range
+  y_pos <- (y_lims[1] + y_lims[2]) / 1.8  # Center on y-axis
+  
+  p <- p +
+    annotate("text", 
+             x = length(stat) * 0.6,
+             y = y_pos,
+             label = glue("ES = {signif(gsea_res$ES[1], 3)}\np = {signif(gsea_res$pval[1], 3)}"),
+             hjust = 0, vjust = 0.5,
+             size = 3, fontface = "plain")
+  
+  # Change enrichment curve color
+  p$layers[[1]]$aes_params$colour <- "blue"
+  
+  # Remove gridlines
+  p <- p +
+    theme_classic() +
+    theme(panel.grid = element_blank())
+  
+  # Save and print
+  ggsave(here("CRISPR_RBP_KO", "output", "figures", 
+              glue("CRISPR_RBP_KO_GSEA_{params$RBP}_{params$miRNA}.pdf")),
+         p, width = 3, height = 2.5)
+  
+  print(p)
+}
 
-```{r}
-for (i in 1:length(comp_lst)){
-  # Define the RBP, miR, condition and KD
-  RBP = comp_lst[[i]][1]
-  miRNA = comp_lst[[i]][2]
-  cond = comp_lst[[i]][3]
-  KD = comp_lst[[i]][4]
-  cell = comp_lst[[i]][5]
-  type_int = comp_lst[[i]][6]
-
-  if(cell == "HepG2"){
-    stab_KD = stab_HepG2
-  } else {
-    stab_KD = stab_K562
-  }
-  
-  # Remove NAs
-  KO_RBP <- res_lst[[cond]][!(is.na(res_lst[[cond]]$padj)), ] 
-  
-  # Filtering to keep the same genes
-  common_genes <- intersect(row.names(KO_RBP), row.names(stab_KD))
-  
-  # KD of RBP of interest, medians
-  KD_RBP <- stab_KD[common_genes, grep(KD, colnames(stab_KD))]
-  KD_RBP <- rowMedians(data.matrix(KD_RBP))
-
-  # KO of RBP of interest
-  KO_RBP <- KO_RBP[common_genes, ]
-  log2FCs <- KO_RBP$log2FoldChange
-  names(log2FCs) <- row.names(KO_RBP)
-  stat <- KO_RBP$stat
-  names(stat) <- row.names(KO_RBP)
-    
-  # Define miRNA targets
-  targets <- row.names(miR_int)[miR_int[, miRNA] > 0]
-  
-  # Make table with median stab changes in both conditions and column indicating if genes are miRNA targets
-  x <- as.data.frame(cbind(common_genes, KD_RBP, log2FCs))
-  colnames(x)[2:3] <- c("KD", "KO") 
-  x$miR_target <- NA
-  x$miR_target <- as.numeric(x$common_genes %in% targets)
-  
-  # Filter for rows w/o NAs
-  x <- x[rowSums(is.na(x)) == 0, ]
-  
-  # Add whter the gene is a target and if it behaves as expected in KD
-  x$GOI <- 0
-  if(type_int == "-"){
-    for (j in 1:nrow(x)){
-      if (x$miR_target[j] == 1 & x$KD[j] < 0){
-        x$GOI[j] <- 1
-      }
-    }
-  } else {
-    for (j in 1:nrow(x)){
-      if (x$miR_target[j] == 1 & x$KD[j] > 0){
-        x$GOI[j] <- 1
-      }
-    }
-  }
-    
-  genelist <- list(x$common_genes[x$GOI == 1])
-  names(genelist) <- "miRtarsExpChangeKD"
-  fgseaRes <- fgsea(pathways = genelist,
-    stats = stat,
-    minSize=10)
-  print(plotEnrichment(genelist[[1]], stat, gseaParam = 1, ticksSize = 0.05))
+# Generate GSEA plots for all comparisons
+for (i in seq_len(nrow(comp_tbl))) {
+  run_gsea_analysis(comp_tbl[i, ], stab_list, res_lst, miR_int)
 }
 ```
-
-The plots correspond, in order, to PTBP1-miR-29, SUPV3L1-miR-19, and SUPV3L1-miR-17
 
 ```{r}
 sessionInfo()

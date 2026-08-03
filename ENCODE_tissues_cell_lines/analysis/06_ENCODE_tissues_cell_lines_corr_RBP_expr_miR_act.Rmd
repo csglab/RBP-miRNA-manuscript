@@ -94,15 +94,17 @@ roi_expr <- roi_expr[common_samples]
 moi_act <- moi_act[match(common_samples, moi_act$sample_name), ]
 stopifnot(all(moi_act$sample_name == names(roi_expr)))
 
+corr <- cor.test(roi_expr, moi_act$coefficient_log2)
+
 pdf(here("ENCODE_tissues_cell_lines", "output", "figures", "ENCODE_tissues_cell_lines_SUPV3L1_vs_miR17_scatterplot.pdf"), height=4, width=4)
 plot(roi_expr, moi_act$coefficient_log2, pch = 16, cex=0.5, xlab=paste0(roi, " expression log2(FPKM)"), ylab=paste0(moi, " activity"))
 abline(lm(moi_act$coefficient_log2 ~ roi_expr), col = 4, lwd = 2)
-text(0.8, 0.12, paste("r = ", round(cor.test(roi_expr, moi_act$coefficient_log2)$estimate, 3), sep=""))
+text(0, 0.14, paste("r = ", round(corr$estimate, 3), "\np = ", format(corr$p.value, digits = 2), "\nn = ", length(roi_expr), sep=""), adj = 0)
 dev.off()
 
 plot(roi_expr, moi_act$coefficient_log2, pch = 16, cex=0.5, xlab=paste0(roi, " expression log2(FPKM)"), ylab=paste0(moi, " activity"))
 abline(lm(moi_act$coefficient_log2 ~ roi_expr), col = 4, lwd = 2)
-text(0.8, 0.12, paste("r = ", round(cor.test(roi_expr, moi_act$coefficient_log2)$estimate, 3), sep=""))
+text(0, 0.14, paste("r = ", round(corr$estimate, 3), "\np = ", format(corr$p.value, digits = 2), "\nn = ", length(roi_expr), sep=""), adj = 0)
 ```
 
 # Compute correlations between RBP expression and miRNA activity for all candidate interaction pairs
