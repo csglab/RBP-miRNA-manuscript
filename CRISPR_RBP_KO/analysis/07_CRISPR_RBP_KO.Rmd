@@ -1,5 +1,5 @@
 ---
-title: "Correlations between miRNA activity and RBP expression across tissues and cell lines from ENCODE"
+title: "Comparing transcriptome changes induced CRISPR-mediated RBP knockouts with those observed upon shRNA-mediated inhibition "
 author: "Gabrielle Perron"
 date: '`r format(Sys.Date(), "%Y-%B-%d")`'
 output: 
@@ -83,9 +83,9 @@ res_lst <- list(
 )
 
 # Save result tables
-res_lst$DDX55_KOvsEmpty <- write.csv(res_lst$DDX55_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_DDX55_KOvsEmpty_DGEA.csv"))
-res_lst$PTBP1_KOvsEmpty <- write.csv(res_lst$PTBP1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_PTBP1_KOvsEmpty_DGEA.csv"))
-res_lst$SUPV3L1_KOvsEmpty <- write.csv(res_lst$SUPV3L1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_SUPV3L1_KOvsEmpty_DGEA.csv"))
+write.csv(res_lst$DDX55_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_DDX55_KOvsEmpty_DGEA.csv"))
+write.csv(res_lst$PTBP1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_PTBP1_KOvsEmpty_DGEA.csv"))
+write.csv(res_lst$SUPV3L1_KOvsEmpty, file = here("CRISPR_RBP_KO", "output", "supplementary_tables", "CRISPR_RBP_KO_SUPV3L1_KOvsEmpty_DGEA.csv"))
 ```
 
 # Prepare normalized counts

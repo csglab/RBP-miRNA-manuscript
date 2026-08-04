@@ -1,0 +1,160 @@
+---
+title: "Estimating mRNA stability changes in TCGA tumors"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+set.seed(1)
+```
+
+# Load libraries
+
+```{r}
+library(MASS)
+library(data.table)
+library(tidyverse)
+library(glue)
+```
+
+# Load the ddf (estimates of changes in stability), ddf_stdev (standard deviations) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS 
+
+We are analyzing all 17 cancer types that had at least 5 normal samples.
+
+```{r}
+# Extract cancer IDs from BETAS_ddf files 
+cancer_IDs <- list.files(here("TCGA", "data"), pattern = "BETAS_ddf\\.csv$") |>
+  sub("TCGA-", "", x = _) |>
+  sub(".BETAS_ddf.csv", "", x = _)
+
+cat("Cancer IDs found:", paste(cancer_IDs, collapse = ", "), "\n")
+
+# Helper function to load and convert CSV to numeric matrix
+load_numeric_matrix <- function(filename) {
+  read.csv(filename, row.names = 1) |>
+    as.matrix() |>
+    `mode<-`("numeric")
+}
+```
+
+# Define std cutoff to retain closest to 10,000 genes as possible, and apply that filter
+
+```{r}
+# Helper function to find cutoff that retains ~10,000 genes
+find_optimal_cutoff <- function(data, stdev, row_threshold = 0.8, col_threshold = 0.2, target_genes = 10000, increment = 0.05) {
+  cutoff <- 0.1
+  
+  while (TRUE) {
+    # Mask low-confidence values
+    data_masked <- data
+    data_masked[stdev > cutoff] <- NA
+    
+    # Keep rows (genes) with at least 80% non-NA values in normal and tumor samples
+    normal_cols <- grep(".11$", colnames(data_masked))
+    tumor_cols <- grep(".01$", colnames(data_masked))
+    
+    row_completeness_normal <- rowSums(!is.na(data_masked[, normal_cols])) / length(normal_cols)
+    row_completeness_tumor <- rowSums(!is.na(data_masked[, tumor_cols])) / length(tumor_cols)
+    
+    passing_rows <- intersect(
+      which(row_completeness_normal >= row_threshold),
+      which(row_completeness_tumor >= row_threshold)
+    )
+    
+    data_with_rows_kept <- data_masked[passing_rows, ]
+    
+    # Remove samples (columns) with > 20% NAs
+    col_completeness <- colSums(!is.na(data_with_rows_kept)) / nrow(data_with_rows_kept)
+    passing_cols <- col_completeness > (1 - col_threshold)
+    data_filtered <- data_with_rows_kept[, passing_cols]
+    
+    n_genes <- nrow(data_filtered)
+    
+    if (n_genes >= target_genes) break
+    cutoff <- cutoff + increment
+  }
+  
+  removed_samples <- colnames(data_with_rows_kept)[!colnames(data_with_rows_kept) %in% colnames(data_filtered)]
+  
+  list(data = data_filtered, cutoff = cutoff, n_genes = n_genes, removed_samples = removed_samples)
+}
+```
+
+# Perform bias correction and generate partial residuals for all cancer types
+
+```{r}
+# Helper function to define sample types (tumor=1 or normal=0)
+extract_sample_type <- function(sample_names) {
+  ifelse(grepl("\\.01$", sample_names), 1, 0)
+}
+
+# Helper function to perform robust regression and extract outputs
+fit_rlm_row <- function(gene_idx, ddf_data, dfi_data, stype_vec) {
+  fit <- rlm(ddf_data[gene_idx, ] ~ dfi_data[gene_idx, ] + stype_vec, 
+             na.action = na.exclude, maxit = 100)
+  coefs <- coef(fit)
+  resids <- residuals(fit)
+  partial <- resids + (coefs[3] * stype_vec)  # partial residual includes sample type effect
+  
+  list(residual = resids, coeff_dfi = coefs[2], coeff_stype = coefs[3], 
+       partial_residual = partial)
+}
+
+# Process each cancer type
+process_cancer_type <- function(cancer_ID) {
+  cat("\n=== Processing", cancer_ID, "===\n")
+  
+  # Load data matrices
+  ddf <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_ddf.csv")))
+  ddf_stdev <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_ddf_stdev.csv")))
+  dfi <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_dfi.csv")))
+  
+  cat("Original dimensions - ddf:", nrow(ddf), "x", ncol(ddf), "\n")
+  
+  # Apply cutoff filtering
+  cutoff_result <- find_optimal_cutoff(ddf, ddf_stdev)
+  ddf_fltr <- cutoff_result$data
+  dfi_fltr <- dfi[rownames(ddf_fltr), colnames(ddf_fltr)]
+  stype <- extract_sample_type(colnames(ddf_fltr))
+  
+  cat("Final cutoff:", cutoff_result$cutoff, "\n")
+  cat("Filtered dimensions - ddf:", nrow(ddf_fltr), "x", ncol(ddf_fltr), "\n")
+  
+  # Fit robust regression for each gene
+  cat("Fitting robust regression models...\n")
+  results <- lapply(seq_len(nrow(ddf_fltr)), 
+                   fit_rlm_row, ddf_fltr, dfi_fltr, stype)
+  
+  # Extract and put results into matrices
+  partial_res <- do.call(rbind, lapply(results, `[[`, "partial_residual"))
+  rownames(partial_res) <- rownames(ddf_fltr)
+  colnames(partial_res) <- colnames(ddf_fltr)
+  
+  # Save results
+  output_dir <- here("TCGA", "output", "supplementary_tables")
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+  
+  output_file <- file.path(output_dir, 
+    glue("TCGA-{cancer_ID}_stability_bias_corr.csv"))
+  write.csv(partial_res, file = output_file)
+  
+  partial_res
+}
+
+# Process all cancer types
+partial_residuals_list <- setNames(
+  lapply(cancer_IDs, process_cancer_type),
+  cancer_IDs
+)
+```
+
+```{r}
+sessionInfo()
+```

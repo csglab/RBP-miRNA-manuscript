@@ -15,3 +15,5 @@ renv/cache/
 ENCODE_RBP_KD/data/BETAS.ddf.filtered.allSamples.txt
 ENCODE_RBP_KD/data/BETAS.dfi.allSamples.txt
 ENCODE_tissues_cell_lines/data/ENCODE_total_RNA-seq_gene_FPKM.csv
+TCGA/data/*BETAS_d*
+TCGA/output/supplementary_tables/*_stability_bias_corr*
