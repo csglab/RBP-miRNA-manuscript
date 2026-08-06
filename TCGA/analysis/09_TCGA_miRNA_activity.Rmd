@@ -103,7 +103,7 @@ fit_glm_sample <- function(glm_data, sample_name, cancer_ID) {
 }
 ```
 
-# Process all cancer types
+# Process all cancer types, fit glm and correction for multiple testing
 
 ```{r}
 stab_dir <- here("TCGA", "output", "supplementary_tables")
@@ -120,7 +120,12 @@ process_cancer_type <- function(cancer_ID) {
   stab_file <- file.path(stab_dir, glue("TCGA-{cancer_ID}_stability_bias_corr.csv"))
   stability <- read.csv(stab_file)
   
-  # Merge with 3'UTR annotations
+  # Extract sample names and count tumor/normal samples
+  sample_names <- colnames(stability)[-1]
+  n_tumor <- sum(grepl("\\.01$", sample_names))
+  n_normal <- sum(grepl("\\.11$", sample_names))
+  
+  # Merge stability with 3'UTR annotations
   glmMatrix <- merge(stability, UTR_miRNA, by = 1)
   colnames(glmMatrix)[1] <- "Gene_id"
   
@@ -129,15 +134,48 @@ process_cancer_type <- function(cancer_ID) {
     select(where(~ !all(is.na(.))))
   
   # Fit GLM for all samples in this cancer type and apply FDR correction
-  map_dfr(
+  glm_data <- map_dfr(
     colnames(stability)[-1],
     ~ fit_glm_sample(glmMatrix, .x, cancer_ID)
   ) |>
     mutate(FDR = p.adjust(pvalue, method = "fdr"))
+  
+  # Return both GLM results and sample counts
+  list(
+    glm_results = glm_data,
+    sample_counts = tibble(cancer_ID = cancer_ID, n_tumor = n_tumor, n_normal = n_normal)
+  )
 }
 
 # Apply to all cancer IDs and combine results
-glm_results <- map_dfr(cancer_IDs, process_cancer_type)
+all_results <- map(cancer_IDs, process_cancer_type)
+
+# Extract GLM results and sample counts from the list
+glm_results <- map_dfr(all_results, "glm_results")
+sample_counts <- map_dfr(all_results, "sample_counts")
+```
+
+# Sample counts table by cancer type
+
+```{r}
+sample_counts
+
+sum(sample_counts$n_tumor)
+sum(sample_counts$n_normal)
+
+length(sample_counts$cancer_ID)
+```
+
+# Convert inferred target stability effects into miRNA activity estimates by reversing the coefficient sign, express coefficients on a log2 scale
+
+```{r}
+glm_results <- glm_results |>
+  mutate(
+    coefficient = -coefficient,
+    coefficient_log2 = log2(exp(coefficient))
+  )
+
+head(glm_results)
 ```
 
 # Reformat miRNA names
@@ -169,17 +207,23 @@ write.csv(glm_results, file = here("TCGA", "output", "supplementary_tables", "TC
 # Determine the miRNAs that have significant changes in activity in at least 10 tumor samples for each cancer type
 
 ```{r}
-<== 
-sig_miRNAs <- glm_results |>
-  filter(FDR < 0.05) |>
-  group_by(
+sig_miRNAs <- glm_results %>%
+  filter(grepl("\\.01$", sample_name)) %>%   # Keep only primary tumor samples
+  filter(FDR < 0.05) %>%
+  group_by(cancer_type, miRNA) %>%
+  summarise(
+    n_samples = n_distinct(sample_name),
+    median_coefficient = median(coefficient, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(n_samples >= 10) %>%
+  arrange(cancer_type, desc(n_samples))
 
 sig_miRNAs
 
 # Save
 write.csv(sig_miRNAs, here("TCGA", "output", "supplementary_tables", "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv"), row.names = F)
 ```
-
 
 
 # Visualizing significantly dysregulated miRNAs

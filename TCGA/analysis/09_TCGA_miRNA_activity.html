@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Differential miRNA activity in TCGA tumors</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-August-05</h4>
+<h4 class="date">2026-August-06</h4>
 
 </div>
 
@@ -1911,8 +1911,8 @@ miR_binding &lt;- read.csv(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, &qu
   )
 }</code></pre>
 </div>
-<div id="process-all-cancer-types" class="section level1" number="6">
-<h1><span class="header-section-number">6</span> Process all cancer types</h1>
+<div id="process-all-cancer-types-fit-glm-and-correction-for-multiple-testing" class="section level1" number="6">
+<h1><span class="header-section-number">6</span> Process all cancer types, fit glm and correction for multiple testing</h1>
 <pre class="r"><code>stab_dir &lt;- here(&quot;TCGA&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;)
 
 # Prepare 3&#39;UTR annotations (constant across cancer types)
@@ -1927,7 +1927,12 @@ process_cancer_type &lt;- function(cancer_ID) {
   stab_file &lt;- file.path(stab_dir, glue(&quot;TCGA-{cancer_ID}_stability_bias_corr.csv&quot;))
   stability &lt;- read.csv(stab_file)
   
-  # Merge with 3&#39;UTR annotations
+  # Extract sample names and count tumor/normal samples
+  sample_names &lt;- colnames(stability)[-1]
+  n_tumor &lt;- sum(grepl(&quot;\\.01$&quot;, sample_names))
+  n_normal &lt;- sum(grepl(&quot;\\.11$&quot;, sample_names))
+  
+  # Merge stability with 3&#39;UTR annotations
   glmMatrix &lt;- merge(stability, UTR_miRNA, by = 1)
   colnames(glmMatrix)[1] &lt;- &quot;Gene_id&quot;
   
@@ -1936,15 +1941,21 @@ process_cancer_type &lt;- function(cancer_ID) {
     select(where(~ !all(is.na(.))))
   
   # Fit GLM for all samples in this cancer type and apply FDR correction
-  map_dfr(
+  glm_data &lt;- map_dfr(
     colnames(stability)[-1],
     ~ fit_glm_sample(glmMatrix, .x, cancer_ID)
   ) |&gt;
     mutate(FDR = p.adjust(pvalue, method = &quot;fdr&quot;))
+  
+  # Return both GLM results and sample counts
+  list(
+    glm_results = glm_data,
+    sample_counts = tibble(cancer_ID = cancer_ID, n_tumor = n_tumor, n_normal = n_normal)
+  )
 }
 
 # Apply to all cancer IDs and combine results
-glm_results &lt;- map_dfr(cancer_IDs, process_cancer_type)</code></pre>
+all_results &lt;- map(cancer_IDs, process_cancer_type)</code></pre>
 <pre><code>## Processing cancer type: BLCA 
 ## Processing cancer type: BRCA 
 ## Processing cancer type: CHOL 
@@ -1962,9 +1973,61 @@ glm_results &lt;- map_dfr(cancer_IDs, process_cancer_type)</code></pre>
 ## Processing cancer type: STAD 
 ## Processing cancer type: THCA 
 ## Processing cancer type: UCEC</code></pre>
+<pre class="r"><code># Extract GLM results and sample counts from the list
+glm_results &lt;- map_dfr(all_results, &quot;glm_results&quot;)
+sample_counts &lt;- map_dfr(all_results, &quot;sample_counts&quot;)</code></pre>
 </div>
-<div id="reformat-mirna-names" class="section level1" number="7">
-<h1><span class="header-section-number">7</span> Reformat miRNA names</h1>
+<div id="sample-counts-table-by-cancer-type" class="section level1" number="7">
+<h1><span class="header-section-number">7</span> Sample counts table by cancer type</h1>
+<pre class="r"><code>sample_counts</code></pre>
+<pre><code>## # A tibble: 17 × 3
+##    cancer_ID n_tumor n_normal
+##    &lt;chr&gt;       &lt;int&gt;    &lt;int&gt;
+##  1 BLCA          406       19
+##  2 BRCA         1089      113
+##  3 CHOL           36        9
+##  4 COAD          455       41
+##  5 ESCA          159        9
+##  6 HNSC          498       44
+##  7 KICH           60       16
+##  8 KIRC          527       72
+##  9 KIRP          284       32
+## 10 LIHC          371       50
+## 11 LUAD          513       59
+## 12 LUSC          439       27
+## 13 PRAD          493       52
+## 14 READ          166       10
+## 15 STAD          371       31
+## 16 THCA          497       58
+## 17 UCEC          539       35</code></pre>
+<pre class="r"><code>sum(sample_counts$n_tumor)</code></pre>
+<pre><code>## [1] 6903</code></pre>
+<pre class="r"><code>sum(sample_counts$n_normal)</code></pre>
+<pre><code>## [1] 677</code></pre>
+<pre class="r"><code>length(sample_counts$cancer_ID)</code></pre>
+<pre><code>## [1] 17</code></pre>
+</div>
+<div id="convert-inferred-target-stability-effects-into-mirna-activity-estimates-by-reversing-the-coefficient-sign-express-coefficients-on-a-log2-scale" class="section level1" number="8">
+<h1><span class="header-section-number">8</span> Convert inferred target stability effects into miRNA activity estimates by reversing the coefficient sign, express coefficients on a log2 scale</h1>
+<pre class="r"><code>glm_results &lt;- glm_results |&gt;
+  mutate(
+    coefficient = -coefficient,
+    coefficient_log2 = log2(exp(coefficient))
+  )
+
+head(glm_results)</code></pre>
+<pre><code>## # A tibble: 6 × 7
+##   miRNA     coefficient  pvalue sample_name   cancer_type   FDR coefficient_log2
+##   &lt;chr&gt;           &lt;dbl&gt;   &lt;dbl&gt; &lt;chr&gt;         &lt;chr&gt;       &lt;dbl&gt;            &lt;dbl&gt;
+## 1 let.7        -0.0524  0.00520 TCGA.2F.A9KO… BLCA        0.310         -0.0756 
+## 2 miR.101      -0.0146  0.393   TCGA.2F.A9KO… BLCA        0.874         -0.0210 
+## 3 miR.103a     -0.00259 0.860   TCGA.2F.A9KO… BLCA        0.980         -0.00374
+## 4 miR.10abc    -0.0213  0.227   TCGA.2F.A9KO… BLCA        0.800         -0.0307 
+## 5 miR.122       0.0302  0.113   TCGA.2F.A9KO… BLCA        0.699          0.0435 
+## 6 miR.124       0.00203 0.877   TCGA.2F.A9KO… BLCA        0.982          0.00293</code></pre>
+</div>
+<div id="reformat-mirna-names" class="section level1" number="9">
+<h1><span class="header-section-number">9</span> Reformat miRNA names</h1>
 <pre class="r"><code>glm_results$miRNA &lt;- gsub(&quot;\\.[A-Z].*&quot;, &quot;&quot;, glm_results$miRNA)
 glm_results$miRNA &lt;- gsub(&quot;_.*&quot;, &quot;&quot;, glm_results$miRNA)
 glm_results$miRNA &lt;- gsub(&quot;\\.&quot;, &quot;-&quot;, glm_results$miRNA)
@@ -1974,14 +2037,45 @@ glm_results &lt;- glm_results |&gt;
   mutate(miRNA = coalesce(canonical, miRNA)) |&gt;
   select(-canonical)</code></pre>
 </div>
-<div id="compute-signed-log10p-values" class="section level1" number="8">
-<h1><span class="header-section-number">8</span> Compute signed log10(p-values)</h1>
+<div id="compute-signed-log10p-values" class="section level1" number="10">
+<h1><span class="header-section-number">10</span> Compute signed log10(p-values)</h1>
 <pre class="r"><code>glm_results$signed_logP &lt;- -log10(glm_results$pvalue)</code></pre>
 </div>
-<div id="save-results" class="section level1" number="9">
-<h1><span class="header-section-number">9</span> Save results</h1>
+<div id="save-results" class="section level1" number="11">
+<h1><span class="header-section-number">11</span> Save results</h1>
 <pre class="r"><code># Save all results in long-format tibble 
 write.csv(glm_results, file = here(&quot;TCGA&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;TCGA_miRNA_activity.csv&quot;), row.names = FALSE)</code></pre>
+</div>
+<div id="determine-the-mirnas-that-have-significant-changes-in-activity-in-at-least-10-tumor-samples-for-each-cancer-type" class="section level1" number="12">
+<h1><span class="header-section-number">12</span> Determine the miRNAs that have significant changes in activity in at least 10 tumor samples for each cancer type</h1>
+<pre class="r"><code>sig_miRNAs &lt;- glm_results %&gt;%
+  filter(FDR &lt; 0.05) %&gt;%
+  group_by(cancer_type, miRNA) %&gt;%
+  summarise(
+    n_samples = n_distinct(sample_name),
+    median_coefficient = median(coefficient, na.rm = TRUE),
+    .groups = &quot;drop&quot;
+  ) %&gt;%
+  filter(n_samples &gt;= 10) %&gt;%
+  arrange(cancer_type, desc(n_samples))
+
+sig_miRNAs</code></pre>
+<pre><code>## # A tibble: 55 × 4
+##    cancer_type miRNA      n_samples median_coefficient
+##    &lt;chr&gt;       &lt;chr&gt;          &lt;int&gt;              &lt;dbl&gt;
+##  1 BLCA        miR-29-3p        164            -0.0731
+##  2 BLCA        miR-200bc         20             0.0574
+##  3 BLCA        let-7             11            -0.0972
+##  4 BRCA        miR-29-3p        433            -0.0586
+##  5 BRCA        miR-26-5p         74            -0.0694
+##  6 BRCA        miR-200bc         70             0.0520
+##  7 BRCA        miR-143-3p        25            -0.0568
+##  8 BRCA        miR-19-3p         19             0.0791
+##  9 BRCA        let-7             15            -0.0915
+## 10 BRCA        miR-21-5p         14             0.0730
+## # ℹ 45 more rows</code></pre>
+<pre class="r"><code># Save
+write.csv(sig_miRNAs, here(&quot;TCGA&quot;, &quot;output&quot;, &quot;supplementary_tables&quot;, &quot;TCGA_sig_mirs_atleast10Tsamples_allCancers.csv&quot;), row.names = F)</code></pre>
 </div>
 
 
