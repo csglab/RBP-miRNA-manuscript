@@ -18,193 +18,173 @@ set.seed(1)
 # Load libraries
 
 ```{r}
-
+library(tibble)
+library(dplyr)
+library(purrr)
+library(glue)
 ```
 
-# Load bias-corrected stability in TCGA cancers
+# Cancer types to analyze
 
-<==
-    
-# Load the 3'UTR annotations (lengths and nucleotide composition)
-    
 ```{r}
-UTR_nt <- read.table("3UTR_nt_composition_new.txt", header=TRUE, row.names=NULL)
-UTR_length <- read.table("3UTR_length_new.txt", header=TRUE, row.names=NULL)
+# Extract cancer IDs from BETAS_ddf files 
+cancer_IDs <- list.files(here("TCGA", "data"), pattern = "BETAS_ddf\\.csv$") |>
+  sub("TCGA-", "", x = _) |>
+  sub(".BETAS_ddf.csv", "", x = _)
+
+cat("Cancer IDs found:", paste(cancer_IDs, collapse = ", "), "\n")
 ```
 
-# Load the predicted miRNA binding matrix
+# Load the 3'UTR nucleotide composition and length annotations, and miRNA seed matches
 
 ```{r}
-binding_miRNAs <- read.csv("miRNA_seed_matches_3UTRs2000bp.csv", header=TRUE, row.names=NULL)
+UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
+miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
 ```
 
-# Merge the tables based on gene IDs, remove the columns that only contain NAs
+# Define miRNA name mapping
 
 ```{r}
-stab <- cbind(row.names(partial_res), partial_res)
-UTR <- merge(UTR_nt, UTR_length, by=1)
-UTR_binding <- merge(UTR, binding_miRNAs, by=1)
-glmMatrix <- merge(stab, UTR_binding, by=1)
-glmMatrix <- glmMatrix[ , !apply(is.na(glmMatrix),2,all)]
+mirna_name_mapping <- tibble(
+  original = c(
+    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
+    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
+    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
+    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
+    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
+    "miR-18ab", "miR-299", "miR-328a", "let-7"
+  ),
+  canonical = c(
+    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
+    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
+    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
+    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
+    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
+    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
+    "miR-328-3p", "let-7"
+  )
+)
 ```
 
-Create matrices where the regression coefficients and p-values will be outputed
+# Define GLM fitting function
 
 ```{r}
-nb_samples_fltr <- ncol(glmMatrix) - ncol(UTR_binding)
-
-pval <- matrix(NA, nrow=nb_samples_fltr, ncol=ncol(UTR_binding)-1)
-rownames(pval) = colnames(glmMatrix)[2:(nb_samples_fltr + 1)]
-colnames(pval) = colnames(UTR_binding)[-1]
-
-coeff <- pval
-```
-
-Infer miRNA activity using a glm with the differential stability data as the response, and as the predictors: 3'UTR_length, 3'UTR nucleotide and dinucleotide composition, and miRNA binding.
-
-```{r}
-for (i in 2:(nb_samples_fltr +1)){
-  fit <- glm(as.numeric(glmMatrix[,i]) ~ as.matrix(glmMatrix[,(nb_samples_fltr+2):ncol(glmMatrix)]), na.action=na.exclude)
-  coeff_full <- as.data.frame(coeff[i-1,]) # Define an empty table of coefficients for that sample
-  coeff_tmp <- as.data.frame(coef(summary(fit))[-1,1]) # Get the outputed coefficientss for that sample
-  row.names(coeff_tmp) <- gsub("as.matrix\\(glmMatrix\\[, \\(nb_samples_fltr \\+ 2):ncol\\(glmMatrix\\)\\]\\)", "", row.names(coeff_tmp))
-  coeff_full[,1] <- coeff_tmp[match(row.names(coeff_full), row.names(coeff_tmp)), 1] # Fill in the sample coefficients table with the available coefficients, missing ones remain NA
-  coeff[i-1,] <- as.vector(coeff_full[,1]) # Fill the big table with the coefficients of the sample
-
-  pval_full <- as.data.frame(pval[i-1,]) # Define an empty p-values table for that sample
-  pval_tmp <- as.data.frame(coef(summary(fit))[-1,4]) # Get the outputed p-values for that sample
-  row.names(pval_tmp) <- gsub("as.matrix\\(glmMatrix\\[, \\(nb_samples_fltr \\+ 2):ncol\\(glmMatrix\\)\\]\\)", "", row.names(pval_tmp))
-  pval_full[,1] <- pval_tmp[match(row.names(pval_full), row.names(pval_tmp)), 1] # Fill in the sample p-values table with the available p-values, missing ones remain NA
-  pval[i-1,] <- as.vector(pval_full[,1]) # Fill the big p-values table with the p-values of the sample
+fit_glm_sample <- function(glm_data, sample_name, cancer_ID) {
+  # glm_data: complete data frame with response and all predictors
+  # sample_name: name of the sample 
+  # cancer_ID: cancer type identifier
+  
+  predictor_names <- names(glm_data)[
+    names(glm_data) != "Gene_id" &
+      !grepl("^TCGA\\.", names(glm_data))
+  ]
+  # Formula: response ~ confounders and miRNA affinity predictors
+  # Intercept included automatically
+  formula_str <- paste0(
+    sample_name,
+    " ~ ",
+    paste(predictor_names, collapse = " + ")
+  )
+  
+  fit <- glm(as.formula(formula_str), data = glm_data, na.action = na.exclude)
+  coef_summary <- coef(summary(fit))
+  
+  # Extract coefficients and p-values for predictors only (miRNA cols, skip intercept and confounders)
+  predictor_rows <- which(grepl("^(miR\\.|let\\.)", rownames(coef_summary)))
+  
+  tibble(
+    miRNA = rownames(coef_summary)[predictor_rows],
+    coefficient = coef_summary[predictor_rows, 1],
+    pvalue = coef_summary[predictor_rows, 4],
+    sample_name = sample_name,
+    cancer_type = cancer_ID
+  )
 }
 ```
 
-Remove columns corresponding to 3'UTR length and nucleotide composition from the tables
+# Process all cancer types
 
 ```{r}
-pval <- pval[,22:ncol(pval)]           
-coeff <- coeff[,22:ncol(coeff)]
+stab_dir <- here("TCGA", "output", "supplementary_tables")
+
+# Prepare 3'UTR annotations (constant across cancer types)
+UTR <- merge(UTR_nt, UTR_length, by = 1)
+UTR_miRNA <- merge(UTR, miR_binding, by = 1)
+
+# Function to process a single cancer type
+process_cancer_type <- function(cancer_ID) {
+  cat("Processing cancer type:", cancer_ID, "\n")
+  
+  # Load stability data for this cancer type
+  stab_file <- file.path(stab_dir, glue("TCGA-{cancer_ID}_stability_bias_corr.csv"))
+  stability <- read.csv(stab_file)
+  
+  # Merge with 3'UTR annotations
+  glmMatrix <- merge(stability, UTR_miRNA, by = 1)
+  colnames(glmMatrix)[1] <- "Gene_id"
+  
+  # Remove columns that are only NAs
+  glmMatrix <- glmMatrix |>
+    select(where(~ !all(is.na(.))))
+  
+  # Fit GLM for all samples in this cancer type and apply FDR correction
+  map_dfr(
+    colnames(stability)[-1],
+    ~ fit_glm_sample(glmMatrix, .x, cancer_ID)
+  ) |>
+    mutate(FDR = p.adjust(pvalue, method = "fdr"))
+}
+
+# Apply to all cancer IDs and combine results
+glm_results <- map_dfr(cancer_IDs, process_cancer_type)
 ```
 
-FDR correction
+# Reformat miRNA names
 
 ```{r}
-pval_vector <- c(pval)
-pval_vector_FDR <- p.adjust(pval_vector, method="fdr")
-FDR <- matrix(pval_vector_FDR, nrow = nrow(pval),ncol = ncol(pval))
+glm_results$miRNA <- gsub("\\.[A-Z].*", "", glm_results$miRNA)
+glm_results$miRNA <- gsub("_.*", "", glm_results$miRNA)
+glm_results$miRNA <- gsub("\\.", "-", glm_results$miRNA)
 
-colnames(FDR) <- colnames(pval)
-row.names(FDR) <- row.names(pval)
+glm_results <- glm_results |>
+  left_join(mirna_name_mapping, by = c("miRNA" = "original")) |>
+  mutate(miRNA = coalesce(canonical, miRNA)) |>
+  select(-canonical)
 ```
 
-Switch signs of coefficients so that they represent miRNA activity and not target stability
+# Compute signed log10(p-values)
 
 ```{r}
-coeff <- -(coeff)
+glm_results$signed_logP <- -log10(glm_results$pvalue)
 ```
 
-Save coefficient results
+# Save results
 
 ```{r}
-write.csv(coeff, file="TCGA-BLCA_miRNA_activity.csv")
-write.csv(pval, file="TCGA-BLCA_miRNA_activity_pval.csv")
-write.csv(FDR, file="TCGA-BLCA_miRNA_activity_FDR.csv")
+# Save all results in long-format tibble 
+write.csv(glm_results, file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"), row.names = FALSE)
 ```
 
-# Determine the miRNAs that have significant changes in activity in at least 10 tumor samples 
+# Determine the miRNAs that have significant changes in activity in at least 10 tumor samples for each cancer type
 
 ```{r}
-FDR_T <- FDR[grep("-01$", row.names(FDR)), ]
-sig_miRNAs <- colnames(FDR_T)[colSums(FDR < 0.05, na.rm=T) >= 10]
-write.csv(sig_miRNAs, file = "TCGA-BLCA_sig_miRNAs_10Tsamples.csv", row.names = F)
-```
+<== 
+sig_miRNAs <- glm_results |>
+  filter(FDR < 0.05) |>
+  group_by(
 
-As mentioned previously, this procedure was repeated for all 17 cancer types that had at least 5 normal samples (excluding GBM).
-
-For Supplementary Table 4, we load the lists of miRNAs that are significant in a least 10 tumor samples for each cancer type and merge them into a single table.
-
-```{r}
-sig_mirs_files <- Sys.glob("TCGA-*_sig_miRNAs_10Tsamples.csv")
-sig_mirs_list <- lapply(sig_mirs_files, read.csv)
-
-# Identify the cancer type for each file
-cancers <- gsub("TCGA-", "", sig_mirs_files)
-cancers <- gsub("_.*", "", cancers)
-cancers <- rep(cancers, unlist(lapply(sig_mirs_list, nrow)))
-
-# Bind
-sig_mirs_complete_list <- cbind(cancers, do.call(rbind, sig_mirs_list))
-colnames(sig_mirs_complete_list)[2] <- "sig_mirs"
+sig_miRNAs
 
 # Save
-write.csv(sig_mirs_complete_list, "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv", row.names = F)
+write.csv(sig_miRNAs, here("TCGA", "output", "supplementary_tables", "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv"), row.names = F)
 ```
 
-Load the activity data from all cancers 
 
-```{r}
-miR_act_files <- Sys.glob("TCGA-*_miRNA_activity.csv")
-miR_act_list <- lapply(miR_act_files, read.csv, row.names = 1)
-
-miR_act_pval_files <- Sys.glob("TCGA-*_miRNA_activity_pvalues.csv")
-miR_act_pval_list <- lapply(miR_act_pval_files, read.csv, row.names = 1)
-
-miR_act_FDR_files <- Sys.glob("TCGA-*_miRNA_activity_FDR.csv")
-miR_act_FDR_list <- lapply(miR_act_FDR_files, read.csv, row.names = 1)
-```
-
-Combine all samples into a single table. 
-
-```{r}
-miR_act_complete <- do.call(rbind, miR_act_list)
-miR_act_complete_pval <- do.call(rbind, miR_act_pval_list)
-miR_act_complete_FDR <- do.call(rbind, miR_act_FDR_list)
-```
-
-Define the cancer type for each sample
-
-```{r}
-cancers <- miR_act_files
-cancers <- gsub("TCGA-", "", cancers)
-cancers <- gsub("_miRNA_activity.csv", "", cancers)
-
-nb_samples_cancers <- unlist(lapply(miR_act_list, function(x) nrow(x)))
-cancers_vector <- rep(cancers, nb_samples_cancers)
-
-miR_act_complete <- cbind(miR_act_complete, cancers_vector)
-miR_act_complete_pval <- cbind(miR_act_complete_pval, cancers_vector)
-miR_act_complete_FDR<- cbind(miR_act_complete_FDR, cancers_vector)
-```
-
-Retain only tumor samples 
-
-```{r}
-row.names(miR_act_complete) <- gsub("-", "\\.", row.names(miR_act_complete))
-row.names(miR_act_complete_pval) <- row.names(miR_act_complete)
-row.names(miR_act_complete_FDR) <- row.names(miR_act_complete)
-
-act <- miR_act_complete[grep("\\.01$", row.names(miR_act_complete)), ]
-pval <- miR_act_complete_pval[grep("\\.01$", row.names(miR_act_complete_pval)), ]
-FDR <- miR_act_complete_FDR[grep("\\.01$", row.names(miR_act_complete_FDR)), ]
-```
-
-Compute signed log10(p-values)
-
-```{r}
-signs <- sign(act[, -ncol(act)])
-signedLogPvals <- cbind(abs(log10(pval[, -ncol(pval)]))*signs, pval$cancers_vector)
-```
-
-Save
-
-```{r}
-write.csv(act, "TCGA_pancancer_miR_act_onlyT.csv")
-write.csv(pval, "TCGA_pancancer_miR_act_pval_onlyT.csv")
-write.csv(FDR, "TCGA_pancancer_miR_act_FDR_onlyT.csv")
-write.csv(signedLogPvals, "TCGA_pancancer_miR_act_signedlog10pval_onlyT.csv")
-```
 
 # Visualizing significantly dysregulated miRNAs
+
+<==
 
 Initialize tables that will contain the percentages of samples with a significant dysregulation for each miRNA, in each cancer. Separate tables for upregulated and downregulated miRNAs
 

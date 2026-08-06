@@ -19,8 +19,6 @@ set.seed(1)
 
 ```{r}
 library(MASS)
-library(data.table)
-library(tidyverse)
 library(glue)
 ```
 
@@ -52,13 +50,14 @@ find_optimal_cutoff <- function(data, stdev, row_threshold = 0.8, col_threshold 
   cutoff <- 0.1
   
   while (TRUE) {
+    print(cutoff)
     # Mask low-confidence values
     data_masked <- data
     data_masked[stdev > cutoff] <- NA
     
     # Keep rows (genes) with at least 80% non-NA values in normal and tumor samples
-    normal_cols <- grep(".11$", colnames(data_masked))
-    tumor_cols <- grep(".01$", colnames(data_masked))
+    normal_cols <- grep("\\.11$", colnames(data_masked))
+    tumor_cols <- grep("\\.01$", colnames(data_masked))
     
     row_completeness_normal <- rowSums(!is.na(data_masked[, normal_cols])) / length(normal_cols)
     row_completeness_tumor <- rowSums(!is.na(data_masked[, tumor_cols])) / length(tumor_cols)
@@ -90,7 +89,7 @@ find_optimal_cutoff <- function(data, stdev, row_threshold = 0.8, col_threshold 
 # Perform bias correction and generate partial residuals for all cancer types
 
 ```{r}
-# Helper function to define sample types (tumor=1 or normal=0)
+# Helper function to infer sample type from TCGA barcode suffix (.01 = tumor, .11 = normal)
 extract_sample_type <- function(sample_names) {
   ifelse(grepl("\\.01$", sample_names), 1, 0)
 }
@@ -118,7 +117,7 @@ process_cancer_type <- function(cancer_ID) {
   
   cat("Original dimensions - ddf:", nrow(ddf), "x", ncol(ddf), "\n")
   
-  # Apply cutoff filtering
+  # Mask low-confidence ddf estimates and remove genes/samples with excessive missingness
   cutoff_result <- find_optimal_cutoff(ddf, ddf_stdev)
   ddf_fltr <- cutoff_result$data
   dfi_fltr <- dfi[rownames(ddf_fltr), colnames(ddf_fltr)]
@@ -132,15 +131,13 @@ process_cancer_type <- function(cancer_ID) {
   results <- lapply(seq_len(nrow(ddf_fltr)), 
                    fit_rlm_row, ddf_fltr, dfi_fltr, stype)
   
-  # Extract and put results into matrices
+  # Combine per-gene partial residuals into a gene × sample matrix
   partial_res <- do.call(rbind, lapply(results, `[[`, "partial_residual"))
   rownames(partial_res) <- rownames(ddf_fltr)
   colnames(partial_res) <- colnames(ddf_fltr)
   
   # Save results
   output_dir <- here("TCGA", "output", "supplementary_tables")
-  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-  
   output_file <- file.path(output_dir, 
     glue("TCGA-{cancer_ID}_stability_bias_corr.csv"))
   write.csv(partial_res, file = output_file)
