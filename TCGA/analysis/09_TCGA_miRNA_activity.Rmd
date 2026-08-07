@@ -22,6 +22,12 @@ library(tibble)
 library(dplyr)
 library(purrr)
 library(glue)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(SingleCellExperiment)
+library(scater)
+library(rsvd)
 ```
 
 # Cancer types to analyze
@@ -48,21 +54,36 @@ miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2
 ```{r}
 mirna_name_mapping <- tibble(
   original = c(
-    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
-    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
-    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
-    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
-    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
-    "miR-18ab", "miR-299", "miR-328a", "let-7"
+    "let-7", "miR-101", "miR-10abc", "miR-122", "miR-124", "miR-127", "miR-133abc",
+    "miR-135ab", "miR-136", "miR-138", "miR-141", "miR-143", "miR-145", "miR-146ac",
+    "miR-150", "miR-153", "miR-155", "miR-15abc", "miR-17", "miR-182", "miR-184",
+    "miR-185", "miR-187", "miR-18ab", "miR-191", "miR-193", "miR-194", "miR-196abc",
+    "miR-199ab-5p", "miR-19ab", "miR-1ab", "miR-200bc", "miR-203", "miR-204",
+    "miR-21", "miR-210", "miR-214", "miR-216a", "miR-216b", "miR-217", "miR-218",
+    "miR-22", "miR-221", "miR-23abc", "miR-24", "miR-25", "miR-26ab", "miR-27abc",
+    "miR-299", "miR-29abcd", "miR-300", "miR-30abcdef", "miR-31", "miR-326",
+    "miR-328a", "miR-329", "miR-338", "miR-33ab", "miR-34ac", "miR-370", "miR-375",
+    "miR-376abd", "miR-376c", "miR-377", "miR-383", "miR-433", "miR-448",
+    "miR-450a", "miR-487b", "miR-495", "miR-496", "miR-504", "miR-505", "miR-539",
+    "miR-543", "miR-544", "miR-551a", "miR-7", "miR-758", "miR-874", "miR-9",
+    "miR-93", "miR-96", "miR-99ab", "miR.181abcd"
   ),
   canonical = c(
-    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
-    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
-    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
-    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
-    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
-    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
-    "miR-328-3p", "let-7"
+    "let-7-5p", "miR-101-3p", "miR-10-5p", "miR-122-5p", "miR-124-3p", "miR-127-3p",
+    "miR-133-3p", "miR-135-5p", "miR-136-5p", "miR-138-5p", "miR-141-3p", "miR-143-3p",
+    "miR-145-5p", "miR-146-5p", "miR-150-5p", "miR-153-3p", "miR-155-5p", "miR-15-5p",
+    "miR-17-5p", "miR-182-5p", "miR-184", "miR-185-5p", "miR-187-3p", "miR-18-5p",
+    "miR-191-5p", "miR-193-3p", "miR-194-5p", "miR-196-5p", "miR-199-5p", "miR-19-3p",
+    "miR-1-3p", "miR-200bc-3p", "miR-203a-3p", "miR-204-5p", "miR-21-5p", "miR-210-3p",
+    "miR-214-3p", "miR-216a-5p", "miR-216b-5p", "miR-217", "miR-218-5p", "miR-22-3p",
+    "miR-221-3p", "miR-23-3p", "miR-24-3p", "miR-25-3p", "miR-26-5p", "miR-27-3p",
+    "miR-299-3p", "miR-29-3p", "miR-381-3p", "miR-30-5p", "miR-31-5p", "miR-326",
+    "miR-328-3p", "miR-329-3p", "miR-338-3p", "miR-33-5p", "miR-34-5p", "miR-370-3p",
+    "miR-375", "miR-376-3p", "miR-376c-3p", "miR-377-3p", "miR-383-5p", "miR-433-3p",
+    "miR-448", "miR-450-5p", "miR-487-3p", "miR-495-3p", "miR-496", "miR-4725-5p",
+    "miR-505-3p", "miR-539-5p", "miR-543", "miR-544a-3p", "miR-551-3p", "miR-7-5p",
+    "miR-758-3p", "miR-874-3p", "miR-9-5p", "miR-302-3p", "miR-96-5p", "miR-99-5p",
+    "miR-181-5p"
   )
 )
 ```
@@ -74,7 +95,7 @@ fit_glm_sample <- function(glm_data, sample_name, cancer_ID) {
   # glm_data: complete data frame with response and all predictors
   # sample_name: name of the sample 
   # cancer_ID: cancer type identifier
-  
+  sample_type <- ifelse(grepl("\\.01$", sample_name), "tumor", "normal")
   predictor_names <- names(glm_data)[
     names(glm_data) != "Gene_id" &
       !grepl("^TCGA\\.", names(glm_data))
@@ -98,7 +119,8 @@ fit_glm_sample <- function(glm_data, sample_name, cancer_ID) {
     coefficient = coef_summary[predictor_rows, 1],
     pvalue = coef_summary[predictor_rows, 4],
     sample_name = sample_name,
-    cancer_type = cancer_ID
+    cancer_type = cancer_ID,
+    sample_type = sample_type
   )
 }
 ```
@@ -193,8 +215,13 @@ glm_results <- glm_results |>
 
 # Compute signed log10(p-values)
 
+Multiply log10(p-value) by the sign of the coefficient to indicate direction of miRNA activity:
+
 ```{r}
-glm_results$signed_logP <- -log10(glm_results$pvalue)
+glm_results <- glm_results |>
+  mutate(
+    signed_logP = sign(coefficient) * (-log10(pvalue))
+  )
 ```
 
 # Save results
@@ -202,6 +229,18 @@ glm_results$signed_logP <- -log10(glm_results$pvalue)
 ```{r}
 # Save all results in long-format tibble 
 write.csv(glm_results, file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"), row.names = FALSE)
+# glm_results <- read.csv(file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
+```
+
+# Number of miRNAs with dysregulated activity in at least one tumor sample 
+
+```{r}
+glm_results %>%
+  filter(grepl("\\.01$", sample_name)) %>%   # Keep only primary tumor samples
+  filter(!is.na(FDR), FDR < 0.05) %>%
+  pull(miRNA) %>%
+  unique() %>%
+  length()
 ```
 
 # Determine the miRNAs that have significant changes in activity in at least 10 tumor samples for each cancer type
@@ -225,221 +264,199 @@ sig_miRNAs
 write.csv(sig_miRNAs, here("TCGA", "output", "supplementary_tables", "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv"), row.names = F)
 ```
 
+# % of colon adenocarcinomas (COAD) that show a significant increase in miR-19-3p activity
+
+```{r}
+glm_results %>%
+  filter(
+    cancer_type == "COAD",
+    miRNA == "miR-19-3p",
+    sample_type == "tumor"
+  ) %>%
+  summarise(
+    percent = 100 * mean(FDR < 0.05 & coefficient > 0)
+  ) %>%
+  pull(percent)
+```
+
+# % of clear cell renal cell carcinomas (KIRC) that show decreased activity of miR-30-5p
+
+```{r}
+glm_results %>%
+  filter(
+    cancer_type == "KIRC",
+    miRNA == "miR-30-5p",
+    sample_type == "tumor"
+  ) %>%
+  summarise(
+    percent = 100 * mean(FDR < 0.05 & coefficient < 0)
+  ) %>%
+  pull(percent)
+```
+
+# % of liver hepatocellular carcinoma (LIHC) and cholangiocarcinoma (CHOL) tumors that show reduced activity of miR-122-5p
+
+```{r}
+glm_results %>%
+  filter(
+    cancer_type == "LIHC",
+    miRNA == "miR-122-5p",
+    sample_type == "tumor"
+  ) %>%
+  summarise(
+    percent = 100 * mean(FDR < 0.05 & coefficient < 0)
+  ) %>%
+  pull(percent)
+
+glm_results %>%
+  filter(
+    cancer_type == "CHOL",
+    miRNA == "miR-122-5p",
+    sample_type == "tumor"
+  ) %>%
+  summarise(
+    percent = 100 * mean(FDR < 0.05 & coefficient < 0)
+  ) %>%
+  pull(percent)
+```
 
 # Visualizing significantly dysregulated miRNAs
 
-<==
+For each cancer type and miRNA, determine the sqrt(% of tumor samples where the miRNA is upregulated), and same for downregulated.
 
-Initialize tables that will contain the percentages of samples with a significant dysregulation for each miRNA, in each cancer. Separate tables for upregulated and downregulated miRNAs
+We use sqrt(%), to get the circle area, proportional to the percentage, for making the heatmap.
 
 ```{r}
-res_up <- data.matrix(matrix(NA, ncol = length(unique(act$cancers_vector)), nrow = (ncol(act) - 1)))
-colnames(res_up) <- unique(act$cancers_vector)
-row.names(res_up) <- colnames(act)[-ncol(act)]
-
-res_down <- res_up
+htmp_table <- glm_results %>%
+  # Filter for tumor samples ending in '.01'
+  filter(str_detect(sample_name, "\\.01$")) %>% 
+  
+  # Group by cancer type and miRNA
+  group_by(cancer_type, miRNA) %>%
+  
+  # Calculate percentage of upregulated and downregulated samples
+  summarise(
+    sqrt_percent_down = sqrt((sum(FDR < 0.05 & coefficient < 0) / n()) * 100),
+    sqrt_percent_up   = sqrt((sum(FDR < 0.05 & coefficient > 0) / n()) * 100),
+    .groups = "drop"
+  )
 ```
 
-Fill in the table using the miRNA activity data
+Remove miRNAs with only 0s in all cancer types and for both up and downregulation
 
 ```{r}
-for (miR in row.names(res_down)){
-  for (cancer in colnames(res_down)){
-    fdr_fltr <- FDR[FDR$cancers_vector == cancer, miR]
-    act_fltr <- act[act$cancers_vector == cancer, miR]
-    percent_up <- sum(fdr_fltr < 0.05 & act_fltr > 0, na.rm = T)/length(fdr_fltr)*100
-    percent_down <- sum(fdr_fltr < 0.05 & act_fltr < 0, na.rm = T)/length(fdr_fltr)*100
-    res_up[miR, cancer] <- percent_up
-    res_down[miR, cancer] <- percent_down
-  }
+dim(htmp_table)
+htmp_table <- htmp_table %>%
+  group_by(miRNA) %>%
+  filter(any(sqrt_percent_down > 0 | sqrt_percent_up > 0)) %>%
+  ungroup()
+dim(htmp_table)
+```
+
+Get the data after clustering based on the sqrt(%) of samples where the miRNAs are downregulated
+
+```{r}
+# Create matrix for clustering
+down_mat <- htmp_table |>
+  select(miRNA, cancer_type, sqrt_percent_down) |>
+  pivot_wider(
+    names_from = cancer_type,
+    values_from = sqrt_percent_down,
+    values_fill = 0
+  )
+
+# extract matrix
+clust_mat <- down_mat |>
+  column_to_rownames("miRNA") |>
+  as.matrix()
+
+# hierarchical clustering
+hc <- hclust(dist(clust_mat), method = "ward.D2")
+
+# ordered miRNAs
+mirna_order <- hc$labels[hc$order]
+```
+
+```{r}
+# Prepare data for plotting: pivot to wide format, apply clustering order, and return to long format
+plot_data <- htmp_table |>
+  pivot_longer(
+    cols = starts_with("sqrt_percent"),
+    names_to = "direction",
+    values_to = "sqrt_percent"
+  ) |>
+  mutate(
+    direction = recode(direction,
+      "sqrt_percent_down" = "down",
+      "sqrt_percent_up" = "up"
+    ),
+    miRNA = factor(miRNA, levels = mirna_order, ordered = TRUE)
+  ) |>
+  arrange(miRNA)
+
+# Apply a minimum threshold to very small non-zero values
+min_threshold <- 1
+plot_data <- plot_data |>
+  mutate(sqrt_percent = ifelse(
+    sqrt_percent > 0 & sqrt_percent < min_threshold,
+    min_threshold,
+    sqrt_percent
+  ))
+
+# Create plots for up and down regulation
+create_dot_heatmap <- function(data, direction_val, color) {
+  size_limits <- c(0, 10)
+  data_filtered <- data |> filter(direction == direction_val)
+  
+  # Create legend with clean percentage breaks (0, 25, 50, 75, 100%)
+  percent_breaks <- c(0, 25, 50, 75, 100)
+  sqrt_breaks <- sqrt(percent_breaks)
+  legend_labels <- paste0(percent_breaks, "%")
+  
+  ggplot(data_filtered) +
+    geom_point(aes(
+      x = cancer_type,
+      y = miRNA,
+      size = sqrt_percent,
+      color = ifelse(sqrt_percent > 0, color, NA)
+    ), na.rm = TRUE) +
+    scale_color_identity(guide = "none") +
+    scale_size_continuous(
+      name = paste0("% samples with significant\nmiRNA activity ", direction_val, "regulation"),
+      range = c(0.1, 8),
+      breaks = sqrt_breaks,
+      labels = legend_labels,
+      limits = size_limits
+    ) +
+    labs(x = "", y = "") +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12),
+      axis.text.y = element_text(size = 8),
+      text = element_text(size = 12),
+      legend.key.size = unit(1.5, "lines"),
+      panel.background = element_rect(fill = "white", colour = "white"),
+      plot.margin = unit(c(1, 1, 1, 1), "cm")
+    )
 }
-```
 
-Remove miRNAs with only 0s from both tables
-
-```{r}
-rm <- which(rowSums(res_up) == 0 & rowSums(res_down) == 0)
-res_up <- res_up[-rm, ]
-res_down <- res_down[-rm, ]
-```
-
-Replace percentages with sqrt(%), to get the circle area (instead of diameter) proportional to the percentage, for making the heatmap
-
-```{r}
-res_up <- sqrt(res_up)
-res_down <- sqrt(res_down)
-```
-
-Modify the name format of the miRNAs (short form of names, only the first miRNA in the family is retained (e.g. miR-17-5p, not miR-17-50/20....))
-
-```{r}
-lbls <- row.names(res_up)
-lbls <- gsub("miR-33ab$", "miR-33-5p", lbls)
-lbls <- gsub("miR-26ab$", "miR-26-5p", lbls)
-lbls <- gsub("miR-29abcd$", "miR-29-3p", lbls)
-lbls <- gsub("miR-27abc$", "miR-27-3p", lbls)
-lbls <- gsub("miR-133abc$", "miR-133-3p", lbls)
-lbls <- gsub("miR-199ab-5p$", "miR-199-5p", lbls)
-lbls <- gsub("miR-376abd$", "miR-376-3p", lbls)
-lbls <- gsub("miR-23abc$", "miR-23-3p", lbls)
-lbls <- gsub("miR-19ab$", "miR-19-3p", lbls)
-lbls <- gsub("miR-182$", "miR-182-5p", lbls)
-lbls <- gsub("miR-758$", "miR-758-3p", lbls)
-lbls <- gsub("miR-22$", "miR-22-3p", lbls)
-lbls <- gsub("miR-150$", "miR-150-5p", lbls)
-lbls <- gsub("miR-124$", "miR-124-3p", lbls)
-lbls <- gsub("miR-96$", "miR-96-5p", lbls)
-lbls <- gsub("miR-370$", "miR-370-3p", lbls)
-lbls <- gsub("miR-17$", "miR-17-5p", lbls)
-lbls <- gsub("miR-218$", "miR-218-5p", lbls)
-lbls <- gsub("miR-21$", "miR-21-5p", lbls)
-lbls <- gsub("miR-25$", "miR-25-3p", lbls)
-lbls <- gsub("miR-376c$", "miR-376c-3p", lbls)
-lbls <- gsub("miR-10abc$", "miR-10-5p", lbls)
-lbls <- gsub("miR-143$", "miR-143-3p", lbls)
-lbls <- gsub("miR-34ac$", "miR-34-5p", lbls)
-lbls <- gsub("miR-338$", "miR-338-3p", lbls)
-lbls <- gsub("miR-377$", "miR-377-3p", lbls)
-lbls <- gsub("miR-495$", "miR-495-3p", lbls)
-lbls <- gsub("miR-544$", "miR-544a-3p", lbls)
-lbls <- gsub("miR-18ab$", "miR-18-5p", lbls)
-lbls <- gsub("miR-299$", "miR-299-3p", lbls)
-lbls <- gsub("miR-328a$", "miR-328-3p", lbls)
-lbls <- gsub("miR-93$", "miR-302-3p", lbls) 
-lbls <- gsub("miR.181abcd$", "miR-181-5p", lbls)
-lbls <- gsub("miR-539$", "miR-539-5p", lbls)
-lbls <- gsub("miR-450a$", "miR-450-5p", lbls)
-lbls <- gsub("miR-135ab$", "miR-135-5p", lbls)
-lbls <- gsub("miR-138$", "miR-138-5p", lbls)
-lbls <- gsub("miR-141$", "miR-141-3p", lbls)
-lbls <- gsub("miR-146ac$", "miR-146-5p", lbls)
-lbls <- gsub("miR-153$", "miR-153-3p", lbls)
-lbls <- gsub("miR-155$", "miR-155-5p", lbls)
-lbls <- gsub("miR-15abc$", "miR-15-5p", lbls)
-lbls <- gsub("miR-184$", "miR-184", lbls)
-lbls <- gsub("miR-187$", "miR-187-3p", lbls)
-lbls <- gsub("miR-191$", "miR-191-5p", lbls)
-lbls <- gsub("miR-196abc$", "miR-196-5p", lbls)
-lbls <- gsub("miR-1ab$", "miR-1-3p", lbls)
-lbls <- gsub("miR-204$", "miR-204-5p", lbls)
-lbls <- gsub("miR-184$", "miR-184", lbls)
-lbls <- gsub("miR-210$", "miR-210-3p", lbls)
-lbls <- gsub("miR-214$", "miR-214-3p", lbls)
-lbls <- gsub("miR-221$", "miR-221-3p", lbls)
-lbls <- gsub("miR-31$", "miR-31-5p", lbls)
-lbls <- gsub("miR-375$", "miR-375", lbls)
-lbls <- gsub("miR-383$", "miR-383-5p", lbls)
-lbls <- gsub("miR-551a$", "miR-551-3p", lbls)
-lbls <- gsub("miR-7$", "miR-7-5p", lbls)
-lbls <- gsub("miR-9$", "miR-9-5p", lbls)
-lbls <- gsub("miR-99ab$", "miR-99-5p", lbls)
-lbls <- gsub("miR-136$", "miR-136-5p", lbls)
-lbls <- gsub("miR-185$", "miR-185-5p", lbls)
-lbls <- gsub("miR-300$", "miR-381-3p", lbls) ## This is not a typo 
-lbls <- gsub("miR-326$", "miR-326", lbls)
-lbls <- gsub("miR-329$", "miR-329-3p", lbls)
-lbls <- gsub("miR-433$", "miR-433-3p", lbls)
-lbls <- gsub("miR-487b$", "miR-487-3p", lbls)
-lbls <- gsub("miR-504$", "miR-4725-5p", lbls)
-lbls <- gsub("miR-505$", "miR-505-3p", lbls)
-lbls <- gsub("miR-543$", "miR-543", lbls)
-lbls <- gsub("miR-145$", "miR-145-5p", lbls)
-lbls <- gsub("miR-101$", "miR-101-3p", lbls)
-lbls <- gsub("miR-194$", "miR-194-5p", lbls)
-lbls <- gsub("miR-203$", "miR-203a-3p", lbls) 
-lbls <- gsub("miR-193$", "miR-193-3p", lbls)
-lbls <- gsub("miR-216b$", "miR-216b-5p", lbls)
-lbls <- gsub("miR-24$", "miR-24-3p", lbls)
-lbls <- gsub("miR-496$", "miR-496", lbls)
-lbls <- gsub("miR-448$", "miR-448", lbls)
-lbls <- gsub("miR-216a$", "miR-216a-5p", lbls)
-lbls <- gsub("miR-200bc$", "miR-200bc-3p", lbls)
-lbls <- gsub("miR-874$", "miR-874-3p", lbls)
-lbls <- gsub("miR-127$", "miR-127-3p", lbls)
-lbls <- gsub("miR-217$", "miR-217", lbls)
-lbls <- gsub("let-7$", "let-7-5p", lbls) 
-lbls <- gsub("miR-30abcdef$", "miR-30-5p", lbls)
-lbls <- gsub("miR-122$", "miR-122-5p", lbls)
-row.names(res_up) <- lbls
-row.names(res_down) <- lbls
-```
-
-Get the data after clustering
-
-```{r, results = FALSE}
-htmp <- heatmap.2(res_down, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'))
-res_clust_down <- res_down[rev(htmp$rowInd), htmp$colInd]
-res_clust_up <- res_up[rev(htmp$rowInd), htmp$colInd]
-```
-
-Prepare the data tables for making the heatmaps
-
-```{r}
-res_srt_up <- data.table(cbind(row.names(res_clust_up), res_clust_up))
-colnames(res_srt_up)[1] <- "miRNAs"
-res_melt_up <- melt(res_srt_up, id.vars = "miRNAs")
-names(res_melt_up)[2:3] <- c("Cancers", "Percent samples with significant upregulation")
-dat_htmp_up <- res_melt_up
-dat_htmp_up$`Percent samples with significant upregulation` <- as.numeric(as.vector(dat_htmp_up$`Percent samples with significant upregulation`))
-
-res_srt_down <- data.table(cbind(row.names(res_clust_down), res_clust_down))
-colnames(res_srt_down)[1] <- "miRNAs"
-res_melt_down <- melt(res_srt_down, id.vars = "miRNAs")
-names(res_melt_down)[2:3] <- c("Cancers", "Percent samples with significant downregulation")
-dat_htmp_down <- res_melt_down
-dat_htmp_down$`Percent samples with significant downregulation` <- as.numeric(as.vector(dat_htmp_down$`Percent samples with significant downregulation`))
-```
-
-Set the data limits and squish the data accordingly
-
-```{r}
-res_lim_1 <- 1
-res_lim_2 <- 10
-
-dat_htmp_down$`Percent samples with significant downregulation`[dat_htmp_down$`Percent samples with significant downregulation` > 0 & dat_htmp_down$`Percent samples with significant downregulation` < res_lim_1] <- res_lim_1
-
-dat_htmp_up$`Percent samples with significant upregulation`[dat_htmp_up$`Percent samples with significant upregulation` > 0 & dat_htmp_up$`Percent samples with significant upregulation` < res_lim_1] <- res_lim_1
-```
-
-Draw the heatmaps
-
-```{r, eval=F}
-pdf(paste("TCGA_pancancer_percentSamplesWithSigUpMiRsAct_circlesHeatmap.pdf", sep=""), width=9.5, height=15)
-ggplot(dat_htmp_up) +
-geom_point(aes(
-  x = Cancers, 
-  size = `Percent samples with significant upregulation`, 
-  y = factor(miRNAs, levels = rev(unique(dat_htmp_up$miRNAs))),
-  color=ifelse(`Percent samples with significant upregulation`>0, 'red', 'white'))) +
-scale_color_identity() +
-scale_size("Percent samples with significant\nmiRNA activity upregulation", range = c(0.1, 8), breaks = seq(0, res_lim_2, 2), limits=c(0, res_lim_2))+
-labs(x="",y="") +
-theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=12), axis.text = element_text(size=12), axis.text.x = element_text(angle=90, size=12, vjust=0.5, hjust=1), axis.text.y = element_text(size=8), panel.background = element_rect(fill = 'white', colour = 'white')) +
-theme(plot.margin = unit(c(1,1,1,1), "cm")) 
+# Create and save plots
+p_up <- create_dot_heatmap(plot_data, "up", "red")
+pdf(here("TCGA", "output", "figures", "TCGA_percent_tumors_sig_up_mirs_dotplot.pdf"),
+    width = 9.5, height = 15)
+print(p_up)
 dev.off()
 
-pdf(paste("TCGA_pancancer_percentSamplesWithSigDownMiRsAct_circlesHeatmap.pdf", sep=""), width=9.5, height=15)
-ggplot(dat_htmp_down) +
-geom_point(aes(
-  x = Cancers, 
-  size = `Percent samples with significant downregulation`, 
-  y = factor(miRNAs, levels = rev(unique(dat_htmp_down$miRNAs))),
-  color=ifelse(`Percent samples with significant downregulation`>0, 'blue', 'white'))) +
-scale_color_identity() +
-scale_size("Percent samples with significant\nmiRNA activity downregulation", range = c(0.1, 8), breaks = seq(0, res_lim_2, 2), limits=c(0, res_lim_2))+
-labs(x="",y="") +
-theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=12), axis.text = element_text(size=12), axis.text.x = element_text(angle=90, size=12, vjust=0.5, hjust=1), axis.text.y = element_text(size=8), panel.background = element_rect(fill = 'white', colour = 'white')) +
-theme(plot.margin = unit(c(1,1,1,1), "cm")) 
+p_down <- create_dot_heatmap(plot_data, "down", "blue")
+pdf(here("TCGA", "output", "figures", "TCGA_percent_tumors_sig_down_mirs_dotplot.pdf"),
+    width = 9.5, height = 15)
+print(p_down)
 dev.off()
 ```
-
-![Heatmap showing the percent of tumors with significant decrease in the activity of the miRNAs](TCGA_pancancer_percentSamplesWithSigDownMiRsAct_circlesHeatmap.pdf)
-
-![Heatmap showing the percent of tumors with significant increase in the activity of the miRNAs](TCGA_pancancer_percentSamplesWithSigUpMiRsAct_circlesHeatmap.pdf)
 
 # Pan-cancer miRNA activity illustrated using t-SNE plots
 
-Define the function to make the t-SNE plots. This function is derived from code shared by Ariel Madrigal Aguirre.
+Theme function for t-SNE plots
 
 ```{r}
 custom_theme_plot <- function(size_text=15,
@@ -449,7 +466,9 @@ custom_theme_plot <- function(size_text=15,
                               line_size=0.85,
                               line_size_color="black",
                               axis_ticks_length=0.25,
-                              axis_ticks_color="black"
+                              axis_ticks_color="black",
+                              size_legend_text=12,
+                              size_legend_title=14
                               ){
     require(ggplot2)
     if( is.null(size_text_titles) ){
@@ -469,222 +488,183 @@ custom_theme_plot <- function(size_text=15,
               legend.position=leg_pos,
               plot.title=element_text(hjust=0.5, size=size_text),
               axis.text.y=element_text(size=size_text, color="black"),
-              axis.title.y=element_text(size=size_text_titles) )
+              axis.title.y=element_text(size=size_text_titles),
+              legend.text=element_text(size=size_legend_text),
+              legend.title=element_text(size=size_legend_title),
+              legend.key.size=unit(0.8, "cm") )
 }
 ```
 
-Keep miRNAs (columns) and tumors (rows) that have at least one significant hit at FDR < 0.05
+Prepare data for t-SNE visualization
 
 ```{r}
-rowsKeep <- which(rowSums(FDR[, -ncol(FDR)] < 0.05) > 0)
-colsKeep <- c(which(colSums(FDR[, -ncol(FDR)] < 0.05) > 0), ncol(FDR))
-signedLogPvals_fltr <- signedLogPvals[rowsKeep, colsKeep]
-act_fltr <- act[rowsKeep, colsKeep]
-FDR_fltr <- FDR[rowsKeep, colsKeep]
+# Create a wide matrix: samples as rows, miRNAs as columns
+# Filter to tumor samples only and miRNAs with at least one significant hit
+glm_tumor <- glm_results |>
+  filter(grepl("\\.01$", sample_name))
+
+# Create matrices for coefficient and FDR values
+coeff_wide <- glm_tumor |>
+  select(sample_name, miRNA, coefficient) |>
+  pivot_wider(
+    names_from = miRNA,
+    values_from = coefficient,
+    values_fill = NA
+  ) |>
+  column_to_rownames("sample_name") |>
+  as.matrix()
+
+fdr_wide <- glm_tumor |>
+  select(sample_name, miRNA, FDR) |>
+  pivot_wider(
+    names_from = miRNA,
+    values_from = FDR,
+    values_fill = NA
+  ) |>
+  column_to_rownames("sample_name") |>
+  as.matrix()
+
+signed_logp_wide <- glm_tumor |>
+  select(sample_name, miRNA, signed_logP) |>
+  pivot_wider(
+    names_from = miRNA,
+    values_from = signed_logP,
+    values_fill = NA
+  ) |>
+  column_to_rownames("sample_name") |>
+  as.matrix()
+
+# Get cancer type for each sample
+cancer_type <- glm_tumor |>
+  distinct(sample_name, cancer_type) |>
+  tibble::column_to_rownames("sample_name") |>
+  {\(x) setNames(x$cancer_type, rownames(x))}()
+
+# Keep samples and miRNAs with at least one significant hit (FDR < 0.05)
+rows_keep <- which(rowSums(fdr_wide < 0.05, na.rm = TRUE) > 0)
+cols_keep <- which(colSums(fdr_wide < 0.05, na.rm = TRUE) > 0)
+
+signed_logp_flt <- signed_logp_wide[rows_keep, cols_keep]
+coeff_flt <- coeff_wide[rows_keep, cols_keep]
+fdr_flt <- fdr_wide[rows_keep, cols_keep]
+
+# Filter cancer type vector to match filtered samples
+cancer_type_flt <- cancer_type[rownames(coeff_flt)]
+
+# Prepare data for SingleCellExperiment
+# Use coefficients as the expression data (samples become columns after transpose)
+dt <- data.matrix(t(coeff_flt))
+
+# Select miRNAs for coldata 
+mir_cols <- c("miR-17-5p", "miR-29-3p", "miR-30-5p", "miR-19-3p", "miR-122-5p")
+mir_cols_present <- mir_cols[mir_cols %in% colnames(coeff_flt)]
+
+# Build coldata
+coldata <- data.frame(
+  sample = colnames(dt),
+  cancer = cancer_type_flt,
+  stringsAsFactors = FALSE
+)
+
+# Add miRNA activity columns
+for (mir in mir_cols_present) {
+  coldata[[mir]] <- as.numeric(signed_logp_flt[coldata$sample, mir])
+}
 ```
 
-Make the data object for plotting the t-SNE plots. Code derived from one shared by Ariel Madrigal Aguirre.
+Create SingleCellExperiment object and compute t-SNE
 
 ```{r}
-dt <- act_fltr[ , -ncol(act_fltr)]
-dt <- data.matrix(t(dt))
-coldata <- as.data.frame(cbind(colnames(dt), signedLogPvals_fltr[, ncol(signedLogPvals_fltr)], signedLogPvals_fltr$miR.29abcd, signedLogPvals_fltr$miR.30abcdef, signedLogPvals_fltr$miR.19ab, signedLogPvals_fltr$miR.17, signedLogPvals_fltr$miR.200bc, signedLogPvals_fltr$miR.122))
-colnames(coldata) <- c("sample", "cancer", "miR-29abcd", "miR-30abcdef", "miR-19ab", "miR-17", "miR-200bc", "miR-122")
-coldata$`miR-29abcd` <- as.numeric(as.vector(coldata$`miR-29abcd`))
-coldata$`miR-30abcdef` <- as.numeric(as.vector(coldata$`miR-30abcdef`))
-coldata$`miR-19ab` <- as.numeric(as.vector(coldata$`miR-19ab`))
-coldata$`miR-17` <- as.numeric(as.vector(coldata$`miR-17`))
-coldata$`miR-200bc` <- as.numeric(as.vector(coldata$`miR-200bc`))
-coldata$`miR-122` <- as.numeric(as.vector(coldata$`miR-122`))
-
-sce <- SingleCellExperiment(list(logcounts=dt), colData=coldata)
+sce <- SingleCellExperiment(list(logcounts = dt), colData = coldata)
 sce
-```
 
-Adding PCA
-
-```{r}
+# Set seed for reproducibility
 set.seed(5431)
-sce_pca<- rpca(t(assay(sce, "logcounts")), k=100)
-reducedDim(sce, "pca")<- sce_pca$x
+sce_pca <- rpca(t(assay(sce, "logcounts")), k = 100)
+reducedDim(sce, "pca") <- sce_pca$x
+
+# Run t-SNE
+sce_tSNE <- scater::runTSNE(sce, dimred = "pca", perplexity = 50)
+
+# Set color limits
+lims <- 2
 ```
 
-t-SNE
-
-```{r}
-sce_tSNE <- runTSNE(sce, dimred="pca", perplexity=50) 
-```
-
-Set limits
-
-```{r}
-lims=2
-```
-
-Plot t-SNE based on miRNA activity for all miRNAs retained, and save the file
+Plot t-SNE colored by cancer type
 
 ```{r}
 plotReducedDim(sce_tSNE,
                ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="cancer") +
-      custom_theme_plot() +  
-      geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
+               dimred = "TSNE",
+               point_size = 2,               
+               colour_by = "cancer") +
+      custom_theme_plot(size_text = 27, size_text_titles = 30, size_legend_text = 21, size_legend_title = 24) +  
+      labs(colour = "Cancer type") +
+      guides(colour = guide_legend(override.aes = list(size = 8), keyheight = 0.8, keywidth = 0.8)) +
+      theme(legend.spacing.y = unit(-0.3, "cm"))
 
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_cancer.pdf", height=10, width=10)
+pdf(here("TCGA", "output", "figures", "TCGA_pancancer_miR_act_tSNE_cancer.pdf"),
+    height = 10, width = 10)
 plotReducedDim(sce_tSNE,
                ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="cancer") +
-      custom_theme_plot() +  
-      geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
+               dimred = "TSNE",
+               point_size = 2,               
+               colour_by = "cancer") +
+      custom_theme_plot(size_text = 27, size_text_titles = 30, size_legend_text = 21, size_legend_title = 24) +  
+      labs(colour = "Cancer type") +
+      guides(colour = guide_legend(override.aes = list(size = 8), keyheight = 0.8, keywidth = 0.8)) +
+      theme(legend.spacing.y = unit(-0.3, "cm"))
 dev.off()
 ```
 
-Plot the same t-SNE but showing miR-17 activity, and save the file
+Helper function to create t-SNE plots for individual miRNAs
 
 ```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-17") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR17.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-17") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
+create_mir_tsne_plot <- function(mir_name, sce_obj, limits = 2) {
+  plotReducedDim(sce_obj,
+                 ncomponents = 2,
+                 dimred = "TSNE",
+                 point_size = 2,               
+                 colour_by = mir_name) +
+    custom_theme_plot(size_text = 27, size_text_titles = 30, size_legend_text = 21, size_legend_title = 24) +
+    scale_colour_gradient2(
+      low = "blue", high = "red", mid = "white", 
+      midpoint = 0, limits = c(-limits, limits), 
+      oob = scales::squish, 
+      name = "miRNA activity\nsigned log10(p-value)"
+    ) +
+    theme(legend.key.size = unit(1.2, "cm"))
+}
 ```
 
-Repeat for miR-29
+Plot t-SNE for individual miRNAs
 
 ```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-29abcd") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
+# List of miRNAs to visualize
+mir_list <- list(
+  "miR-17-5p" = "TCGA_pancancer_miR_act_tSNE_miR17.pdf",
+  "miR-29-3p" = "TCGA_pancancer_miR_act_tSNE_miR29.pdf",
+  "miR-30-5p" = "TCGA_pancancer_miR_act_tSNE_miR30.pdf",
+  "miR-19-3p" = "TCGA_pancancer_miR_act_tSNE_miR19.pdf",
+  "miR-122-5p" = "TCGA_pancancer_miR_act_tSNE_miR122.pdf"
+)
 
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR29.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-29abcd") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
-```
-
-Repeat for miR-19
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-19ab") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR19.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-19ab") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
-```
-
-Same for miR-30
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-30abcdef") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR30.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-30abcdef") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
-```
-
-Same for miR-200
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-200bc") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR200.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-200bc") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
-```
-
-Same for miR-122
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-122") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-
-pdf("TCGA_pancancer_miRsignedLogPvals_tSNE_miR122.pdf", height=10, width=10)
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=2,               
-               colour_by ="miR-122") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-lims, lims), oob=scales::squish, name="miRNA activity\nsigned log10(p-value)") +
-    geom_point(shape = 1, size=2 ,colour = "grey", alpha=0.5)
-dev.off()
+# Create plots for each miRNA
+for (mir_name in names(mir_list)) {
+  # Only create if miRNA is present in the data
+  if (mir_name %in% colnames(coldata)) {
+    # Display plot
+    print(create_mir_tsne_plot(mir_name, sce_tSNE, limits = lims))
+    
+    # Save to PDF
+    pdf_file <- here("TCGA", "output", "figures", mir_list[[mir_name]])
+    pdf(pdf_file, height = 10, width = 12)
+    print(create_mir_tsne_plot(mir_name, sce_tSNE, limits = lims))
+    dev.off()
+    
+    cat("Saved:", mir_list[[mir_name]], "\n")
+  }
+}
 ```
 
 ```{r}

@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Inferrence of mRNA stability and miRNA activity across tissues and cell lines from ENCODE</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-August-03</h4>
+<h4 class="date">2026-August-06</h4>
 
 </div>
 
@@ -2037,21 +2037,36 @@ glm_results$miRNA &lt;- gsub(&quot;\\.&quot;, &quot;-&quot;, glm_results$miRNA)
 # Define mapping from original names to canonical names
 mirna_name_mapping &lt;- tibble(
   original = c(
-    &quot;miR-33ab&quot;, &quot;miR-26ab&quot;, &quot;miR-29abcd&quot;, &quot;miR-27abc&quot;, &quot;miR-133abc&quot;,
-    &quot;miR-199ab-5p&quot;, &quot;miR-376abd&quot;, &quot;miR-23abc&quot;, &quot;miR-19ab&quot;, &quot;miR-182&quot;,
-    &quot;miR-758&quot;, &quot;miR-22&quot;, &quot;miR-150&quot;, &quot;miR-124&quot;, &quot;miR-96&quot;, &quot;miR-370&quot;,
-    &quot;miR-17&quot;, &quot;miR-218&quot;, &quot;miR-21&quot;, &quot;miR-25&quot;, &quot;miR-376c&quot;, &quot;miR-10abc&quot;,
-    &quot;miR-143&quot;, &quot;miR-34ac&quot;, &quot;miR-338&quot;, &quot;miR-377&quot;, &quot;miR-495&quot;, &quot;miR-544&quot;,
-    &quot;miR-18ab&quot;, &quot;miR-299&quot;, &quot;miR-328a&quot;, &quot;let-7&quot;
+    &quot;let-7&quot;, &quot;miR-101&quot;, &quot;miR-10abc&quot;, &quot;miR-122&quot;, &quot;miR-124&quot;, &quot;miR-127&quot;, &quot;miR-133abc&quot;,
+    &quot;miR-135ab&quot;, &quot;miR-136&quot;, &quot;miR-138&quot;, &quot;miR-141&quot;, &quot;miR-143&quot;, &quot;miR-145&quot;, &quot;miR-146ac&quot;,
+    &quot;miR-150&quot;, &quot;miR-153&quot;, &quot;miR-155&quot;, &quot;miR-15abc&quot;, &quot;miR-17&quot;, &quot;miR-182&quot;, &quot;miR-184&quot;,
+    &quot;miR-185&quot;, &quot;miR-187&quot;, &quot;miR-18ab&quot;, &quot;miR-191&quot;, &quot;miR-193&quot;, &quot;miR-194&quot;, &quot;miR-196abc&quot;,
+    &quot;miR-199ab-5p&quot;, &quot;miR-19ab&quot;, &quot;miR-1ab&quot;, &quot;miR-200bc&quot;, &quot;miR-203&quot;, &quot;miR-204&quot;,
+    &quot;miR-21&quot;, &quot;miR-210&quot;, &quot;miR-214&quot;, &quot;miR-216a&quot;, &quot;miR-216b&quot;, &quot;miR-217&quot;, &quot;miR-218&quot;,
+    &quot;miR-22&quot;, &quot;miR-221&quot;, &quot;miR-23abc&quot;, &quot;miR-24&quot;, &quot;miR-25&quot;, &quot;miR-26ab&quot;, &quot;miR-27abc&quot;,
+    &quot;miR-299&quot;, &quot;miR-29abcd&quot;, &quot;miR-300&quot;, &quot;miR-30abcdef&quot;, &quot;miR-31&quot;, &quot;miR-326&quot;,
+    &quot;miR-328a&quot;, &quot;miR-329&quot;, &quot;miR-338&quot;, &quot;miR-33ab&quot;, &quot;miR-34ac&quot;, &quot;miR-370&quot;, &quot;miR-375&quot;,
+    &quot;miR-376abd&quot;, &quot;miR-376c&quot;, &quot;miR-377&quot;, &quot;miR-383&quot;, &quot;miR-433&quot;, &quot;miR-448&quot;,
+    &quot;miR-450a&quot;, &quot;miR-487b&quot;, &quot;miR-495&quot;, &quot;miR-496&quot;, &quot;miR-504&quot;, &quot;miR-505&quot;, &quot;miR-539&quot;,
+    &quot;miR-543&quot;, &quot;miR-544&quot;, &quot;miR-551a&quot;, &quot;miR-7&quot;, &quot;miR-758&quot;, &quot;miR-874&quot;, &quot;miR-9&quot;,
+    &quot;miR-93&quot;, &quot;miR-96&quot;, &quot;miR-99ab&quot;, &quot;miR.181abcd&quot;
   ),
   canonical = c(
-    &quot;miR-33-5p&quot;, &quot;miR-26-5p&quot;, &quot;miR-29-3p&quot;, &quot;miR-27-3p&quot;, &quot;miR-133-3p&quot;,
-    &quot;miR-199-5p&quot;, &quot;miR-376-3p&quot;, &quot;miR-23-3p&quot;, &quot;miR-19-3p&quot;, &quot;miR-182-5p&quot;,
-    &quot;miR-758-3p&quot;, &quot;miR-22-3p&quot;, &quot;miR-150-5p&quot;, &quot;miR-124-3p&quot;, &quot;miR-96-5p&quot;,
-    &quot;miR-370-3p&quot;, &quot;miR-17-5p&quot;, &quot;miR-218-5p&quot;, &quot;miR-21-5p&quot;, &quot;miR-25-3p&quot;,
-    &quot;miR-376c-3p&quot;, &quot;miR-10-5p&quot;, &quot;miR-143-3p&quot;, &quot;miR-34-5p&quot;, &quot;miR-338-3p&quot;,
-    &quot;miR-377-3p&quot;, &quot;miR-495-3p&quot;, &quot;miR-544a-3p&quot;, &quot;miR-18-5p&quot;, &quot;miR-299-3p&quot;,
-    &quot;miR-328-3p&quot;, &quot;let-7&quot;
+    &quot;let-7-5p&quot;, &quot;miR-101-3p&quot;, &quot;miR-10-5p&quot;, &quot;miR-122-5p&quot;, &quot;miR-124-3p&quot;, &quot;miR-127-3p&quot;,
+    &quot;miR-133-3p&quot;, &quot;miR-135-5p&quot;, &quot;miR-136-5p&quot;, &quot;miR-138-5p&quot;, &quot;miR-141-3p&quot;, &quot;miR-143-3p&quot;,
+    &quot;miR-145-5p&quot;, &quot;miR-146-5p&quot;, &quot;miR-150-5p&quot;, &quot;miR-153-3p&quot;, &quot;miR-155-5p&quot;, &quot;miR-15-5p&quot;,
+    &quot;miR-17-5p&quot;, &quot;miR-182-5p&quot;, &quot;miR-184&quot;, &quot;miR-185-5p&quot;, &quot;miR-187-3p&quot;, &quot;miR-18-5p&quot;,
+    &quot;miR-191-5p&quot;, &quot;miR-193-3p&quot;, &quot;miR-194-5p&quot;, &quot;miR-196-5p&quot;, &quot;miR-199-5p&quot;, &quot;miR-19-3p&quot;,
+    &quot;miR-1-3p&quot;, &quot;miR-200bc-3p&quot;, &quot;miR-203a-3p&quot;, &quot;miR-204-5p&quot;, &quot;miR-21-5p&quot;, &quot;miR-210-3p&quot;,
+    &quot;miR-214-3p&quot;, &quot;miR-216a-5p&quot;, &quot;miR-216b-5p&quot;, &quot;miR-217&quot;, &quot;miR-218-5p&quot;, &quot;miR-22-3p&quot;,
+    &quot;miR-221-3p&quot;, &quot;miR-23-3p&quot;, &quot;miR-24-3p&quot;, &quot;miR-25-3p&quot;, &quot;miR-26-5p&quot;, &quot;miR-27-3p&quot;,
+    &quot;miR-299-3p&quot;, &quot;miR-29-3p&quot;, &quot;miR-381-3p&quot;, &quot;miR-30-5p&quot;, &quot;miR-31-5p&quot;, &quot;miR-326&quot;,
+    &quot;miR-328-3p&quot;, &quot;miR-329-3p&quot;, &quot;miR-338-3p&quot;, &quot;miR-33-5p&quot;, &quot;miR-34-5p&quot;, &quot;miR-370-3p&quot;,
+    &quot;miR-375&quot;, &quot;miR-376-3p&quot;, &quot;miR-376c-3p&quot;, &quot;miR-377-3p&quot;, &quot;miR-383-5p&quot;, &quot;miR-433-3p&quot;,
+    &quot;miR-448&quot;, &quot;miR-450-5p&quot;, &quot;miR-487-3p&quot;, &quot;miR-495-3p&quot;, &quot;miR-496&quot;, &quot;miR-4725-5p&quot;,
+    &quot;miR-505-3p&quot;, &quot;miR-539-5p&quot;, &quot;miR-543&quot;, &quot;miR-544a-3p&quot;, &quot;miR-551-3p&quot;, &quot;miR-7-5p&quot;,
+    &quot;miR-758-3p&quot;, &quot;miR-874-3p&quot;, &quot;miR-9-5p&quot;, &quot;miR-302-3p&quot;, &quot;miR-96-5p&quot;, &quot;miR-99-5p&quot;,
+    &quot;miR-181-5p&quot;
   )
 )
 

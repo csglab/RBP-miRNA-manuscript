@@ -120,21 +120,36 @@ glm_results$miRNA <- gsub("\\.", "-", glm_results$miRNA)
 # Define mapping from original names to canonical names
 mirna_name_mapping <- tibble(
   original = c(
-    "miR-33ab", "miR-26ab", "miR-29abcd", "miR-27abc", "miR-133abc",
-    "miR-199ab-5p", "miR-376abd", "miR-23abc", "miR-19ab", "miR-182",
-    "miR-758", "miR-22", "miR-150", "miR-124", "miR-96", "miR-370",
-    "miR-17", "miR-218", "miR-21", "miR-25", "miR-376c", "miR-10abc",
-    "miR-143", "miR-34ac", "miR-338", "miR-377", "miR-495", "miR-544",
-    "miR-18ab", "miR-299", "miR-328a", "let-7"
+    "let-7", "miR-101", "miR-10abc", "miR-122", "miR-124", "miR-127", "miR-133abc",
+    "miR-135ab", "miR-136", "miR-138", "miR-141", "miR-143", "miR-145", "miR-146ac",
+    "miR-150", "miR-153", "miR-155", "miR-15abc", "miR-17", "miR-182", "miR-184",
+    "miR-185", "miR-187", "miR-18ab", "miR-191", "miR-193", "miR-194", "miR-196abc",
+    "miR-199ab-5p", "miR-19ab", "miR-1ab", "miR-200bc", "miR-203", "miR-204",
+    "miR-21", "miR-210", "miR-214", "miR-216a", "miR-216b", "miR-217", "miR-218",
+    "miR-22", "miR-221", "miR-23abc", "miR-24", "miR-25", "miR-26ab", "miR-27abc",
+    "miR-299", "miR-29abcd", "miR-300", "miR-30abcdef", "miR-31", "miR-326",
+    "miR-328a", "miR-329", "miR-338", "miR-33ab", "miR-34ac", "miR-370", "miR-375",
+    "miR-376abd", "miR-376c", "miR-377", "miR-383", "miR-433", "miR-448",
+    "miR-450a", "miR-487b", "miR-495", "miR-496", "miR-504", "miR-505", "miR-539",
+    "miR-543", "miR-544", "miR-551a", "miR-7", "miR-758", "miR-874", "miR-9",
+    "miR-93", "miR-96", "miR-99ab", "miR.181abcd"
   ),
   canonical = c(
-    "miR-33-5p", "miR-26-5p", "miR-29-3p", "miR-27-3p", "miR-133-3p",
-    "miR-199-5p", "miR-376-3p", "miR-23-3p", "miR-19-3p", "miR-182-5p",
-    "miR-758-3p", "miR-22-3p", "miR-150-5p", "miR-124-3p", "miR-96-5p",
-    "miR-370-3p", "miR-17-5p", "miR-218-5p", "miR-21-5p", "miR-25-3p",
-    "miR-376c-3p", "miR-10-5p", "miR-143-3p", "miR-34-5p", "miR-338-3p",
-    "miR-377-3p", "miR-495-3p", "miR-544a-3p", "miR-18-5p", "miR-299-3p",
-    "miR-328-3p", "let-7"
+    "let-7-5p", "miR-101-3p", "miR-10-5p", "miR-122-5p", "miR-124-3p", "miR-127-3p",
+    "miR-133-3p", "miR-135-5p", "miR-136-5p", "miR-138-5p", "miR-141-3p", "miR-143-3p",
+    "miR-145-5p", "miR-146-5p", "miR-150-5p", "miR-153-3p", "miR-155-5p", "miR-15-5p",
+    "miR-17-5p", "miR-182-5p", "miR-184", "miR-185-5p", "miR-187-3p", "miR-18-5p",
+    "miR-191-5p", "miR-193-3p", "miR-194-5p", "miR-196-5p", "miR-199-5p", "miR-19-3p",
+    "miR-1-3p", "miR-200bc-3p", "miR-203a-3p", "miR-204-5p", "miR-21-5p", "miR-210-3p",
+    "miR-214-3p", "miR-216a-5p", "miR-216b-5p", "miR-217", "miR-218-5p", "miR-22-3p",
+    "miR-221-3p", "miR-23-3p", "miR-24-3p", "miR-25-3p", "miR-26-5p", "miR-27-3p",
+    "miR-299-3p", "miR-29-3p", "miR-381-3p", "miR-30-5p", "miR-31-5p", "miR-326",
+    "miR-328-3p", "miR-329-3p", "miR-338-3p", "miR-33-5p", "miR-34-5p", "miR-370-3p",
+    "miR-375", "miR-376-3p", "miR-376c-3p", "miR-377-3p", "miR-383-5p", "miR-433-3p",
+    "miR-448", "miR-450-5p", "miR-487-3p", "miR-495-3p", "miR-496", "miR-4725-5p",
+    "miR-505-3p", "miR-539-5p", "miR-543", "miR-544a-3p", "miR-551-3p", "miR-7-5p",
+    "miR-758-3p", "miR-874-3p", "miR-9-5p", "miR-302-3p", "miR-96-5p", "miR-99-5p",
+    "miR-181-5p"
   )
 )
 
