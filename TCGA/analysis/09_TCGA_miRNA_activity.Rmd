@@ -584,15 +584,20 @@ sce_pca <- rpca(t(assay(sce, "logcounts")), k = 100)
 reducedDim(sce, "pca") <- sce_pca$x
 
 # Run t-SNE
-sce_tSNE <- scater::runTSNE(sce, dimred = "pca", perplexity = 50)
+# sce_tSNE <- scater::runTSNE(sce, dimred = "pca", perplexity = 50)
+# saveRDS(sce_tSNE, here("TCGA", "output", "rds", "sce_tSNE.rds")) # This caused issues when knitting
+sce_tSNE <- readRDS(here("TCGA", "output", "rds", "sce_tSNE.rds"))
 
 # Set color limits
 lims <- 2
+
+# Print dim
+dim(sce_tSNE)
 ```
 
 Plot t-SNE colored by cancer type
 
-```{r}
+```{r, fig.dim = c(10,10), fig.align = 'center'}
 plotReducedDim(sce_tSNE,
                ncomponents = 2,
                dimred = "TSNE",
@@ -639,7 +644,7 @@ create_mir_tsne_plot <- function(mir_name, sce_obj, limits = 2) {
 
 Plot t-SNE for individual miRNAs
 
-```{r}
+```{r, fig.dim = c(12,10), fig.align = 'center'}
 # List of miRNAs to visualize
 mir_list <- list(
   "miR-17-5p" = "TCGA_pancancer_miR_act_tSNE_miR17.pdf",

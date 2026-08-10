@@ -1,0 +1,481 @@
+---
+title: 'Association between miRNA activity and miRNA abundance across TCGA tumors'
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+set.seed(1)
+```
+
+# Load libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+```
+
+# List of cancer types 
+
+```{r}
+glm_results <- read.csv(file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
+cancers <- unique(glm_results$cancer_type)
+cancers
+```
+
+# Load the miRNA families annotation from TargetScan (https://www.targetscan.org/cgi-bin/targetscan/data_download.vert80.cgi), and filter for human miRNAs
+
+```{r}
+fams <- fread(here("TCGA", "data", "miR_Family_Info.txt"))
+fams <- fams[grep("hsa-", fams$`MiRBase ID`), ] 
+```
+
+# Load the list of miRNA families with significant changes in activity in tumor vs normal samples in at least 10 tumor samples of each cancer type, excluding GBM
+
+```{r}
+sig_mirs <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv"))
+sig_mirs <- sig_mirs[sig_mirs$cancer_type != "GBM", ] # Remove GBM
+miRNAs_og <- unique(sig_mirs$miRNA)
+miRNAs_og
+length(miRNAs_og)
+```
+
+# Retrieve corresponding miRNA family names from the TS annotation 
+
+```{r}
+miRNAs_TS_fam <- unique(fams$`miR family`[grep(paste(miRNAs_og, collapse="|"), fams$`miR family`)])
+length(miRNAs_TS_fam)
+
+miRNAs_TS_fam <- miRNAs_TS_fam[!(miRNAs_TS_fam %in% "miR-142-3p.2")]
+length(miRNAs_TS_fam)
+```
+
+# Helper functions for correlation analysis
+
+```{r}
+# Load and preprocess miRNA abundance data for a specific cancer type, select tumor samples
+load_mir_abundance <- function(cancer) {
+  miR_expr <- read.table(
+    here("TCGA", "data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
+    header = TRUE
+  )
+  
+  # Reformat miR names and use as row names
+  miR_expr$miRseqMature <- gsub("\\|.*", "", miR_expr$miRseqMature)
+  row.names(miR_expr) <- miR_expr$miRseqMature
+  miR_expr <- miR_expr[, -1]
+  
+  # Reformat sample names, select for primary tumors (01A)
+  colnames(miR_expr) <- substr(colnames(miR_expr), 1, 16)
+  miR_expr <- miR_expr[, grep("\\.01A$", colnames(miR_expr))]
+  
+  # Format sample names by removing trailing A
+  colnames(miR_expr) <- gsub("A$", "", colnames(miR_expr))
+  
+  miR_expr
+}
+
+# Extract miRNA activity from glm_results for a specific cancer type (tumors only)
+extract_mir_activity <- function(cancer, glm_results, miRNAs_og) {
+  glm_results |>
+    filter(cancer_type == cancer, grepl("\\.01$", sample_name)) |>
+    filter(miRNA %in% miRNAs_og) |>
+    select(sample_name, miRNA, coefficient_log2)
+}
+
+# Compute correlation between single miRNA abundance and activity pair
+compute_single_correlation <- function(abundance_vals, activity_vals, abundance_samples = NULL, activity_samples = NULL) {
+  # Verify that sample names match (if provided)
+  if (!is.null(abundance_samples) && !is.null(activity_samples)) {
+    stopifnot(
+      "Sample names must be provided for both datasets" = 
+        length(abundance_samples) == length(activity_samples),
+      "Sample names must match in the same order" = 
+        all(abundance_samples == activity_samples)
+    )
+  }
+  
+  # Skip if less than 5 valid samples in either dataset
+  if (sum(!is.na(abundance_vals)) < 5 || sum(!is.na(activity_vals)) < 5) {
+    return(list(estimate = NA, p.value = NA))
+  }
+  
+  cor.test(abundance_vals, activity_vals)
+}
+
+# Compute correlation matrix between all mature miRNA - miRNA family pairs
+compute_correlation_matrix <- function(miR_expr_T, miR_act_long, miROIs, miRNAs_og, common_samples) {
+  coeffs <- matrix(NA, nrow = length(miRNAs_og), ncol = length(miROIs))
+  rownames(coeffs) <- miRNAs_og
+  colnames(coeffs) <- miROIs
+  
+  for (i in seq_along(miRNAs_og)) {
+    mir_family <- miRNAs_og[i]
+    for (j in seq_along(miROIs)) {
+      mir_mature <- miROIs[j]
+      
+      # Extract abundance values for this mature miRNA in the same order as common_samples
+      spec_miR_expr <- as.numeric(miR_expr_T[mir_mature, common_samples])
+      abundance_samples <- common_samples
+      
+      # Extract activity values for this family from long format
+      spec_miR_act_df <- miR_act_long |>
+        filter(miRNA == mir_family, sample_name %in% common_samples) |>
+        arrange(factor(sample_name, levels = common_samples))
+      
+      if (nrow(spec_miR_act_df) > 0) {
+        activity_samples <- spec_miR_act_df$sample_name
+        spec_miR_act <- spec_miR_act_df$coefficient_log2
+        
+        # Verify sample names match in the same order
+        stopifnot(
+          "Abundance samples must match activity samples" = 
+            all(abundance_samples == activity_samples)
+        )
+        
+        test_result <- compute_single_correlation(spec_miR_expr, spec_miR_act, 
+                                                  abundance_samples, activity_samples)
+        coeffs[i, j] <- test_result$estimate
+      }
+    }
+  }
+  
+  coeffs
+}
+
+# Classify correlations as matching or non-matching families
+classify_correlations <- function(coeffs, miROIs, fams) {
+  corrs_matching <- numeric()
+  corrs_nonMatching <- numeric()
+  
+  for (i in seq_len(nrow(coeffs))) {
+    for (j in seq_len(ncol(coeffs))) {
+      # Get the mature miRNA name
+      mir_name <- colnames(coeffs)[j]
+      
+      # Get family name from TargetScan
+      mir_fam <- fams[grep(mir_name, fams$`MiRBase ID`), ]$`miR family`[1]
+      mir_fam <- gsub("/.*", "", mir_fam)
+      mir_fam <- gsub("\\.1", "", mir_fam)
+      
+      
+      if (mir_fam == rownames(coeffs)[i]) {
+        corrs_matching[length(corrs_matching) + 1] <- coeffs[i, j]
+      } else {
+        corrs_nonMatching[length(corrs_nonMatching) + 1] <- coeffs[i, j]
+      }
+    }
+  }
+  
+  list(matching = corrs_matching, nonMatching = corrs_nonMatching)
+}
+
+# Plot density distributions and wilcox test
+plot_correlation_distributions <- function(corrs_matching, corrs_nonMatching, cancer) {
+  # Remove NAs
+  cm_clean <- corrs_matching[!is.na(corrs_matching)]
+  cnm_clean <- corrs_nonMatching[!is.na(corrs_nonMatching)]
+  
+  plot(density(cnm_clean), xlim = c(-0.6, 1), xlab = "Pearson correlation",
+       col = "dodgerblue", main = cancer, ylim = c(0, 4), cex.main = 2, 
+       cex.lab = 1.8, cex.axis = 1.6)
+  lines(density(cm_clean), col = "tomato")
+  
+  wilcox_p <- wilcox.test(corrs_matching, corrs_nonMatching)$p.value
+  text(0.6, 3.7, paste("p =", formatC(wilcox_p, format = "e", digits = 2)), cex = 1.8)
+}
+```
+
+# miRNA activity vs expression correlations
+
+For each cancer and each pair of mature miRNA and miRNA family, correlate mature miRNA abundance and miRNA (family) activity. Output plots showing the probability density functions of Pearson correlations between inferred activity and abundance pairs of mature miRNAs and miRNA family that are matching, or not, in all TCGA cancers for which activity was inferred. miRNAs with significant changes in activity in at least 10 tumor samples in at least one cancer type are included.
+
+```{r}
+# Get all the miRNAs (MiRBase IDs) included in the miRNA families of interest
+miROIs <- unique(gsub("\\.1$", "", 
+  fams[fams$`miR family` %in% miRNAs_TS_fam, ]$`MiRBase ID`))
+
+# Process each cancer type
+results <- lapply(cancers, function(cancer) {
+  # Load abundance data, filter for tumors
+  miR_expr_T <- load_mir_abundance(cancer)
+  
+  # Extract activity from glm_results, filter for tumors
+  miR_act_long <- extract_mir_activity(cancer, glm_results, miRNAs_og)
+  
+  # Find common samples
+  common_samples <- intersect(unique(miR_act_long$sample_name), colnames(miR_expr_T))
+  if (length(common_samples) == 0) return(NULL)
+  
+  miR_expr_T <- miR_expr_T[, common_samples]
+  
+  # Compute correlations
+  coeffs <- compute_correlation_matrix(miR_expr_T, miR_act_long, miROIs, miRNAs_og, common_samples)
+  
+  # Classify as matching/non-matching
+  corr_classification <- classify_correlations(coeffs, miROIs, fams)
+  
+  # Calculate percentages
+  pct_matching <- sum(corr_classification$matching > 0, na.rm = TRUE) /
+    sum(!is.na(corr_classification$matching)) * 100
+  pct_nonMatching <- sum(corr_classification$nonMatching > 0, na.rm = TRUE) /
+    sum(!is.na(corr_classification$nonMatching)) * 100
+  
+  list(
+    cancer = cancer,
+    corrs_matching = corr_classification$matching,
+    corrs_nonMatching = corr_classification$nonMatching,
+    pct_matching = pct_matching,
+    pct_nonMatching = pct_nonMatching
+  )
+}) |> setNames(cancers)
+```
+
+# Density plots for correlation coefficients of matching and non-matching pairs  
+
+```{r}
+pdf(here("TCGA", "output", "figures", "TCGA_miRNA_act_vs_expr_density_plots.pdf"), 
+    width = 14, height = 17)
+par(mfrow = c(5, 4), mar = c(4, 4, 3, 2), mgp = c(2.5, 0.8, 0))
+
+# Plot each cancer's density distributions in alphabetical order
+for (cancer in sort(cancers)) {
+  if (!is.null(results[[cancer]])) {
+    plot_correlation_distributions(
+      results[[cancer]]$corrs_matching,
+      results[[cancer]]$corrs_nonMatching,
+      cancer
+    )
+  }
+}
+
+# Add legend on a blank panel at the end
+plot.new()
+legend("center", 
+       legend = c("miRNAs from same family", "miRNAs from different families"),
+       col = c("tomato", "dodgerblue"), 
+       lty = 1, 
+       cex = 1.2)
+
+dev.off()
+```
+
+# Average % of matching mature miRNA - miRNA family pairs for which there is a significant positive correlation between the activity and abundance, across all cancer types.
+
+```{r}
+# Extract results into separate lists
+pancancer_corrs_matching <- setNames(
+  lapply(results, \(x) x$corrs_matching),
+  names(results)
+)
+pancancer_corrs_nonMatching <- setNames(
+  lapply(results, \(x) x$corrs_nonMatching),
+  names(results)
+)
+percents_pos_corrs_matching <- setNames(
+  sapply(results, \(x) x$pct_matching),
+  names(results)
+)
+percents_pos_corrs_nonMatching <- setNames(
+  sapply(results, \(x) x$pct_nonMatching),
+  names(results)
+)
+```
+
+```{r}
+mean(unlist(percents_pos_corrs_matching), na.rm = T)
+```
+
+# Average % of NON-matching mature miRNA - miRNA family pairs for which there is a significant positive correlation between the activity and abundance, across all cancer types.
+
+```{r}
+mean(unlist(percents_pos_corrs_nonMatching), na.rm = T)
+```
+
+# Violin plots of correlation coefficients for matching pairs in each cancer
+
+```{r}
+# Make a table containing these mature miRNA - miRNA family pairs for all cancers, with the correlation coefficients and cancer type name. Also remove NAs
+pancancer_corrs_matching_df <- data.table(cbind(names(pancancer_corrs_matching[[1]]), do.call(cbind, pancancer_corrs_matching)))
+miRs_table <- melt(pancancer_corrs_matching_df,id.vars = "V1")
+colnames(miRs_table) <- c("miRNAs", "cancer", "correlation")
+miRs_table$correlation <- as.numeric(miRs_table$correlation)
+miRs_table <- miRs_table[!(is.na(miRs_table$correlation)), ]
+
+# Sort by the median correlation coefficient in each cancer. Save for later use
+
+medians <- aggregate(as.vector(miRs_table$correlation), list(miRs_table$cancer), median)
+order_cancers <- as.vector(medians[,1][order(medians[,2], decreasing = T)])
+miRs_table$cancer <- reorder.factor(miRs_table$cancer, new.order=order_cancers)
+miRs_table <- miRs_table %>% arrange(cancer)
+
+# saveRDS(miRs_table, here("TCGA", "output", "rds",  "TCGA_miRfamsSig10T_corr_act_vs_expr_res.rds"))
+
+# Draw the violin plot
+ggplot(miRs_table, aes(x = cancer, y = correlation)) + 
+  geom_violin(fill = "grey80", colour = "#3366FF") +
+  geom_boxplot(width = 0.07) +
+  theme_classic() +
+  ylab("Pearson correlation") + 
+  xlab("") + 
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=20),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  geom_hline(yintercept=0, linetype="dashed", 
+            color = "black", size=0.5)
+```
+
+# Heatmap
+
+```{r}
+# Arrange the cancer types in the same order as in the violin plot. Remove miRNAs that only have NAs and replace remaining NAs with 0s.
+dat_htmp <- as.data.frame(do.call(cbind, pancancer_corrs_matching))
+dat_htmp <- dat_htmp[, as.vector(unique(miRs_table$cancer))]
+dat_htmp <- data.matrix(dat_htmp)
+rows_keep <- which(rowSums(is.na(dat_htmp)) != ncol(dat_htmp))
+dat_htmp <- dat_htmp[rows_keep, ] 
+dat_htmp[is.na(dat_htmp)] <- 0
+
+# Draw the heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf(here("TCGA", "output", "figures", "TCGA_miRfamsSig10T_corr_act_vs_expr_htmp.pdf"), width=18, height=7)
+heatmap.2(dat_htmp, trace="none", col=palette, cexRow=0.01, cexCol=2.5,  breaks=seq(-1,1,length.out=50), mar=c(10,20), keysize=1, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'), density.info = "none", key.par = list(cex=2), lhei=c(1,2), lwid = c(1,5), Colv = F, key.title = "", key.xlab = "Pearson Correlation")
+dev.off()
+```
+
+# Helper function to create scatter plots
+
+```{r}
+plot_mir_abundance_vs_activity <- function(cancer, miRNA_fam, miRNA_mature, glm_results) {
+  # Load abundance
+  miR_expr_T <- load_mir_abundance(cancer)
+  
+  # Extract activity (long format)
+  miR_act_long <- extract_mir_activity(cancer, glm_results, c(miRNA_fam))
+  
+  # Match samples
+  common_samples <- intersect(unique(miR_act_long$sample_name), colnames(miR_expr_T))
+  miR_expr_T <- miR_expr_T[, common_samples]
+  miR_act_long <- miR_act_long |> filter(sample_name %in% common_samples)
+  
+  # Check if miRNA family exists
+  if (nrow(miR_act_long) == 0) {
+    cat("Warning: miRNA family", miRNA_fam, "not found in activity data\n")
+    return(invisible())
+  }
+  
+  # Sort by sample name for correct alignment
+  miR_act_long <- miR_act_long |> arrange(factor(sample_name, levels = common_samples))
+  expr_samples <- common_samples
+  expr_vals <- as.numeric(miR_expr_T[miRNA_mature, common_samples])
+  act_samples <- miR_act_long$sample_name
+  act_vals <- miR_act_long$coefficient_log2
+  
+  # Verify sample names match in the same order
+  stopifnot(
+    "Expression and activity samples must match in the same order" = 
+      all(expr_samples == act_samples)
+  )
+  
+  # Create plot
+  plot(expr_vals, act_vals, pch = 16, cex = 0.5,
+       xlab = "miRNA expression log2(RPM)", ylab = "miRNA activity")
+  abline(lm(act_vals ~ expr_vals), col = 4, lwd = 2)
+  
+  # Add correlation
+  r <- cor.test(expr_vals, act_vals)$estimate
+  text(5.4, 0.09, paste("r =", round(r, 3)))
+}
+```
+
+# Example scatter plot for hsa-miR-122-5p in LIHC
+
+```{r}
+plot_mir_abundance_vs_activity("LIHC", "miR-122", "hsa-miR-122-5p", glm_results)
+```
+
+# Example scatter plot for hsa-miR-204-5p in PRAD
+
+```{r}
+plot_mir_abundance_vs_activity("PRAD", "miR-204", "hsa-miR-204-5p", glm_results)
+```
+
+Show, as examples, the individual coefficients for the correlations between inferred activity of each miRNA family included above with the abundance of each of their family members, in TCGA-KIRC and TCGA-LUAD 
+
+```{r}
+cancer="KIRC"
+
+# Make a color vector for the number of miRNA families
+clrs <- c("dodgerblue","tomato1","chartreuse","maroon4","gray43","lightpink","darkorchid4", "plum","darkseagreen","darksalmon","gray77", "firebrick","orange","lightseagreen","lightslateblue","blue","magenta")
+
+# Retrieve the miRNA families corresponding to each mature miRNA in the results
+mirs_fams <- names(pancancer_corrs_matching[[cancer]]) 
+for(i in mirs_fams){
+  if (i %in% fams$`MiRBase ID`){
+    fam_ts <- fams[fams$`MiRBase ID` == i, ]$`miR family`
+    mirs_fams[mirs_fams == i] <- fam_ts
+  } else if (paste(i, ".1", sep="") %in% fams$`MiRBase ID`) {
+    fam_ts <- fams[fams$`MiRBase ID` == paste(i, ".1", sep=""), ]$`miR family`
+    mirs_fams[mirs_fams == i] <- fam_ts
+  } else {
+    stop("ERROR: miR not found")
+  }
+}
+# Define the number of mature miRNAs per family
+fams_tbl <- table(mirs_fams)
+
+# Reorder and assign the colors
+fams_tbl <- fams_tbl[miRNAs_TS_fam]
+colors <- rep(clrs, as.vector(fams_tbl))
+
+# Draw the barplot
+barplot(pancancer_corrs_matching[[cancer]][!(is.na(pancancer_corrs_matching[[cancer]]))], col=colors[!(is.na(pancancer_corrs_matching[[cancer]]))], ylab="Pearson correlation", las=2, cex.names = 0.6)
+plot.new()
+legend("center", legend = miRNAs_TS_fam, fill=clrs, title = "miRNA families", text.font=1, xpd = F, cex = 0.8)
+```
+
+Repeat the example above for LUAD
+
+```{r}
+cancer="LUAD"
+
+# Make a color vector for the number of miRNA families
+clrs <- c("dodgerblue","tomato1","chartreuse","maroon4","gray43","lightpink","darkorchid4", "plum","darkseagreen","darksalmon","gray77", "firebrick","orange","lightseagreen","lightslateblue","blue","magenta")
+
+# Retrieve the miRNA families corresponding to each mature miRNA in the results
+mirs_fams <- names(pancancer_corrs_matching[[cancer]]) 
+for(i in mirs_fams){
+  if (i %in% fams$`MiRBase ID`){
+    fam_ts <- fams[fams$`MiRBase ID` == i, ]$`miR family`
+    mirs_fams[mirs_fams == i] <- fam_ts
+  } else if (paste(i, ".1", sep="") %in% fams$`MiRBase ID`) {
+    fam_ts <- fams[fams$`MiRBase ID` == paste(i, ".1", sep=""), ]$`miR family`
+    mirs_fams[mirs_fams == i] <- fam_ts
+  } else {
+    stop("ERROR: miR not found")
+  }
+}
+# Define the number of mature miRNAs per family
+fams_tbl <- table(mirs_fams)
+
+# Reorder and assign the colors
+fams_tbl <- fams_tbl[miRNAs_TS_fam]
+colors <- rep(clrs, as.vector(fams_tbl))
+
+# Draw the barplot
+barplot(pancancer_corrs_matching[[cancer]][!(is.na(pancancer_corrs_matching[[cancer]]))], col=colors[!(is.na(pancancer_corrs_matching[[cancer]]))], ylab="Pearson correlation", las=2, cex.names = 0.6)
+```
+
+```{r}
+sessionInfo()
+```
