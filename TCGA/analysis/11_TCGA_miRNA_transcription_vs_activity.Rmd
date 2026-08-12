@@ -21,6 +21,7 @@ library(rtracklayer)
 library(GenomicRanges)
 library(data.table)
 library(purrr)
+library(tibble)
 library(stringr)
 library(dplyr)
 library(tidymodels)
@@ -40,8 +41,6 @@ mir_annot <- as.data.frame(mir_annot)
 # Select for pri-miRNAs
 pri_mir_annot <- mir_annot %>% filter(type == "miRNA_primary_transcript")
 
-# Add column with a new unique miRNA name to the pri-miRNA annotaion
-pri_mir_annot$pri_mir_id <- make.unique(pri_mir_annot$Name)
 head(pri_mir_annot)
 ```
 
@@ -50,8 +49,6 @@ head(pri_mir_annot)
 intron_annot <- import(here("TCGA", "data", "Homo_sapiens.GRCh38.85.chr.Introns.gtf"))
 intron_annot <- as.data.frame(intron_annot)
 
-# Add column containing a new unique intron id
-intron_annot$intron_id <- make.unique(intron_annot$gene_id)
 head(intron_annot)
 ```
 
@@ -61,14 +58,14 @@ pri_mir_gr <- GRanges(
   seqnames = pri_mir_annot$seqnames,
   ranges = IRanges(start = pri_mir_annot$start, end = pri_mir_annot$end),
   strand = pri_mir_annot$strand,
-  pri_mir_id = pri_mir_annot$pri_mir_id
+  pri_mir_id = pri_mir_annot$Name
 )
 
 intron_gr <- GRanges(
   seqnames = intron_annot$seqnames,
   ranges = IRanges(start = intron_annot$start, end = intron_annot$end),
   strand = intron_annot$strand,
-  intron_id = intron_annot$intron_id
+  gene_id = intron_annot$gene_id
 )
 
 # Find all pri-miRNAs contained within introns
@@ -76,9 +73,9 @@ overlaps <- findOverlaps(pri_mir_gr, intron_gr, type = "within")
 mir_gene_pairs <- as.data.frame(overlaps) |>
   mutate(
     pri_mir_id = pri_mir_gr$pri_mir_id[queryHits],
-    intron_id = intron_gr$intron_id[subjectHits]
+    gene_id = intron_gr$gene_id[subjectHits]
   ) |>
-  select(intron_id, pri_mir_id)
+  select(gene_id, pri_mir_id)
 
 # Save 
 write.csv(mir_gene_pairs, file=here("TCGA", "output", "supplementary_tables", "GRCh38_miRs_in_introns.csv"))
@@ -147,7 +144,7 @@ dfe_long <- map_df(dfe_data_list, ~{
 })
 ```
 
-# For each cancer type, for each miRNA contained in introns, test the correlation between the corresponding gene's changes in mRNA abundance (dfe) and transcription (dfi) across tumors.
+# For each cancer type, for each miRNA host gene, test the correlation between changes in mRNA abundance (dfe) and transcription (dfi)
 
 ```{r}
 # Compute correlations for each gene-cancer combination
@@ -164,7 +161,7 @@ dfe_dfi_results <- bind_cols(
   
   # Filter to genes in mir_gene_pairs
   semi_join(
-    mir_gene_pairs |> select(intron_id) |> distinct() |> rename(gene_id = intron_id),
+    mir_gene_pairs |> select(gene_id) |> distinct() |> rename(gene_id = gene_id),
     by = "gene_id"
   ) |>
   
@@ -201,19 +198,7 @@ dfe_dfi_results <- dfe_dfi_results |>
   )
 
 # Save results
-saveRDS(dfe_dfi_results, "TCGA_miRhostGenes_dfeVSdfi_results.rds")
-```
-
-# Filter miRNA-gene pairs for those where changes in abundance relative to the average (dfe) are due at least in part to changes in transcription (dfi). Specifically, retain pairs where the host gene's dfi vs dfe correlation was significant (after FDR correction) and positive in at least 80% of cancers.
-
-```{r}
-genes_sig_pos <- dfe_dfi_results |>
-  filter(fdr < 0.05, correlation > 0) |>
-  group_by(gene_id) |>
-  summarise(sig_pos_freq = n(), .groups = "drop") |>
-  # Keep genes with significant positive correlation in ≥80% of cancers
-  filter(sig_pos_freq / length(cancers) >= 0.8) |>
-  pull(gene_id)
+# saveRDS(dfe_dfi_results, here("TCGA", "output", "rds", "TCGA_miRhostGenes_dfeVSdfi_results.rds"))
 ```
 
 # Heatmap of correlation coefficients for dfe vs dfi for all genes that contain a miRNA in their introns
@@ -234,7 +219,7 @@ signed_r2_matrix <- signed_r2_matrix[
 
 palette <- colorRampPalette(c("blue", "white", "red"))
 
-pdf("TCGA_miRhostGenes_dfeVSdfi_heatmap.pdf", width = 5.5, height = 6)
+pdf(here("TCGA", "output", "figures", "TCGA_miRhostGenes_dfeVSdfi_heatmap.pdf"), width = 5.5, height = 6)
 heatmap.2(signed_r2_matrix, trace = "none", col = palette, cexRow = 0.01, cexCol = 1.1,
   breaks = seq(-1, 1, length.out = 100), mar = c(5, 1), keysize = 0.2,
   hclust = function(x) hclust(x, method = "average"),
@@ -243,271 +228,199 @@ heatmap.2(signed_r2_matrix, trace = "none", col = palette, cexRow = 0.01, cexCol
 dev.off()
 ```
 
-# Correlation between host gene transcription changes and miRNA activity
-
-For the genes identified in the previous section
+# Filter miRNA-gene pairs for those where changes in abundance relative to the average (dfe) are due at least in part to changes in transcription (dfi). Specifically, retain pairs where the host gene's dfi vs dfe correlation was significant (after FDR correction) and positive in at least 80% of cancers.
 
 ```{r}
-mir_gene_pairs <- read.csv("GRCh38_miRs_in_introns_pairs.csv", row.names = 1)
-mir_gene_pairs <- mir_gene_pairs[mir_gene_pairs$intron_id %in% genes_sig_pos,]
+dim(dfe_dfi_results)
+genes_sig_pos <- dfe_dfi_results |>
+  filter(fdr < 0.05, correlation > 0) |>
+  group_by(gene_id) |>
+  summarise(sig_pos_freq = n(), .groups = "drop") |>
+  # Keep genes with significant positive correlation in ≥80% of cancers
+  filter(sig_pos_freq / length(cancers) >= 0.8) |>
+  pull(gene_id)
+length(genes_sig_pos)
 ```
 
-Convert pri-miRNA names to miRNA family names compatible with the activity data
+# Correlation between host gene transcription changes and miRNA activity, for significant genes identified above
+
+First make a table of host gene id, pri-miRNA id and miRNA family
 
 ```{r}
-mir_gene_pairs[,2] <- gsub("hsa-", "", mir_gene_pairs[,2])
-mir_gene_pairs[,2] <- gsub("mir-", "miR-", mir_gene_pairs[,2])
-mir_gene_pairs <- as.data.frame(mir_gene_pairs)
+# Selected host genes and associated miRNA
+mir_gene_pairs_sig <- mir_gene_pairs[mir_gene_pairs$gene_id %in% genes_sig_pos,]
+
+# Load the miRNA families annotation from TargetScan
+fams <- fread(here("TCGA", "data", "miR_Family_Info.txt"))
+fams <- fams[grep("hsa-", fams$`MiRBase ID`), ] 
+
+# Format pri-miRNA IDs to better match
+mir_gene_pairs_sig$pri_mir_id <- gsub("mir-", "miR-", mir_gene_pairs_sig$pri_mir_id)
+
+# Convert pri-miRNA names to miRNA family names compatible with the activity data
+fams$miR_family_2 <- gsub("/.*", "", fams$`miR family`)
+fams$pri_mir_id <- gsub("-3p", "", fams$`MiRBase ID`)
+fams$pri_mir_id <- gsub("-5p", "", fams$pri_mir_id)
+fams <- fams[-grep("\\.1$", fams$pri_mir_id), ]
+fams <- fams[-grep("\\.2$", fams$pri_mir_id), ]
+fams <- fams[, c("pri_mir_id","miR_family_2")]
+fams <- unique(fams)
+
+# Merge TS families in the gene-miRNA pairs table
+mir_gene_pairs_sig <- mir_gene_pairs_sig %>%
+  left_join(
+    fams %>%
+      select(pri_mir_id, miR_family = miR_family_2),
+    by = "pri_mir_id"
+  )
+dim(mir_gene_pairs_sig)
+
+# For the pairs that got no match (NA miR_family), try to remove the -1/2 at the end of the pri-mir to get a match
+mir_gene_pairs_sig$pri_mir_id_2 <- mir_gene_pairs_sig$pri_mir_id
+mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-1$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-2$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-3$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-4$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-5$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+mir_gene_pairs_sig$miR_family[is.na(mir_gene_pairs_sig$miR_family)] <- fams$miR_family_2[match(mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)], fams$pri_mir_id)]
+mir_gene_pairs_sig[is.na(mir_gene_pairs_sig$miR_family), ]
+dim(mir_gene_pairs_sig)
+
+# Remove gene_pri-mir pairs without any found miRNA family in the TS annotation
+mir_gene_pairs_sig <- mir_gene_pairs_sig[!(is.na(mir_gene_pairs_sig$miR_family)), ]
+dim(mir_gene_pairs_sig)
+
+# Load miRNA activity 
+miR_act <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
+miR_act$sample_name <- gsub("\\.", "-", miR_act$sample_name)
+
+# Retain gene_pri-mir pairs that are present in the miRNA activity data
+mir_gene_pairs_sig <- mir_gene_pairs_sig[mir_gene_pairs_sig$miR_family %in% miR_act$miRNA, ]
+dim(mir_gene_pairs_sig)
 ```
 
-Load the miRNA families annotation from TargetScan (https://www.targetscan.org/cgi-bin/targetscan/data_download.vert80.cgi)
-
 ```{r}
-fams <- fread("miR_Family_Info.txt")
-fams <- fams[grep("hsa-", fams$`MiRBase ID`), c(1,4,6)] # Filter for human and useful columns
+# Get the dfi results for the selected host genes in mir_gene_pairs_sig, merge the host miRNA info ONTO IT
+dfi_sig_hosts <- dfi_long[dfi_long$gene_id %in% mir_gene_pairs_sig$gene_id, ]
+
+dfi_sig_hosts <- dfi_sig_hosts %>%
+  left_join(
+    mir_gene_pairs_sig %>%
+      select(gene_id, pri_mir_id, miR_family),
+    by = "gene_id", 
+    relationship =
+  "many-to-many"
+  )
+dim(dfi_sig_hosts)
+
+# Merge miRNA activity results onto that based on miRNA family, cancer, and sample name
+dfi_sig_hosts <- dfi_sig_hosts %>%
+  left_join(
+    miR_act %>%
+      select(
+        miRNA,
+        cancer_type,
+        sample_name,
+        coefficient_log2
+      ),
+    by = c(
+      "miR_family" = "miRNA",
+      "cancer" = "cancer_type",
+      "sample" = "sample_name"
+    )
+  )
+dim(dfi_sig_hosts)
 ```
 
-Load miRNA activity (output from TCGA_miRNA_activity.Rmd)
+# For each pri-miRNA-host-gene pair retained, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
 
 ```{r}
-miR_act <- as.data.frame(read.csv("TCGA_pancancer_miR_act_onlyT.csv", row.names=1))
-row.names(miR_act) <- gsub("\\.", "-", row.names(miR_act))
-colnames(miR_act) <- gsub("\\.", "-", colnames(miR_act))
-```
-
-Format the miRNA family names in the activity data to match the annotation
-
-```{r}
-x <- gsub("-5p", "", colnames(miR_act))
-x <- gsub("-3p", "", x)
-rm_vals <- x[which(duplicated(x))]
-rm_cols <- which(x %in% rm_vals)
-miR_act <- miR_act[, -rm_cols]
-colnames(miR_act) <- x[-rm_cols]
-```
-
-Match the miRNA names in the activity data and the pri-miRNA-host-gene pairs identified previously
-
-```{r}
-act_mirs <- colnames(miR_act)[-ncol(miR_act)]
-act_mirs_prefix <- paste(gsub("-.*", "", act_mirs), "-", sep="")
-act_mirs_nbs <- gsub(".*-", "", act_mirs)
-act_mirs_nbs <- gsub("[a-z]", "", act_mirs_nbs)
-act_mirs <- paste(act_mirs_prefix, act_mirs_nbs, sep="")
-act_mirs_ltrs <- gsub(".*-", "", colnames(miR_act)[-ncol(miR_act)])
-act_mirs_ltrs <- gsub("[0-9]", "", act_mirs_ltrs)
-
-act_mirs_lst <- list()
-i=1
-for(m in 1:(length(act_mirs))){
-  if(act_mirs_ltrs[m] == ""){
-    act_mirs_lst[[i]] <- c(colnames(miR_act)[m], colnames(miR_act)[m])
-    i=i+1
-  } else {
-    for(l in unlist(strsplit(act_mirs_ltrs[m], ""))){
-      act_mirs_lst[[i]] <- c(paste(act_mirs[m], l, sep=""), colnames(miR_act)[m])
-      i=i+1
-    }
-  }
-}
-act_mirs_matches <- do.call("rbind", act_mirs_lst)
-mir_gene_pairs$miR_act_family <- act_mirs_matches[match(mir_gene_pairs$pri_mir_id, act_mirs_matches[,1]), 2]
-```
-
-For miRNAs for which a family was not found, find it in the TargetScan annotation
-
-```{r}
-for (i in 1:nrow(mir_gene_pairs)){
-  if(is.na(mir_gene_pairs$miR_act_family[i])){
-    mir <- mir_gene_pairs$pri_mir_id[i]
-    mir_nb <- gsub(".*-", "", mir)
-    ts_fams <- fams[grep(paste("-", mir_nb, "-", sep=""), fams$`MiRBase ID`), ]
-    ts_fam_alt <- ts_fams[grep("/", ts_fams$`miR family`), ]
-    if (nrow(ts_fams) == 0 | nrow(ts_fam_alt) == 0){
-      next
-    }
-    ts_fam_first_mir <- gsub("/.*", "", ts_fam_alt$`miR family`)
-    ts_fam_first_mir <- gsub("-3p", "", ts_fam_first_mir)
-    ts_fam_first_mir <- gsub("-5p", "", ts_fam_first_mir)
-    if(length(ts_fam_first_mir %in% act_mirs_matches[,1]) > 1){
-      if(sum(ts_fam_alt$`Family Conservation?` >= 1) == 0){
-        next
-      } else if (sum(ts_fam_alt$`Family Conservation?` >= 1) == 1){
-        ts_fam_alt <- ts_fam_alt[ts_fam_alt$`Family Conservation?` >= 1, ]
-        ts_fam_first_mir <- gsub("/.*", "", ts_fam_alt$`miR family`)
-        ts_fam_first_mir <- gsub("-3p", "", ts_fam_first_mir)
-        ts_fam_first_mir <- gsub("-5p", "", ts_fam_first_mir)
-      } else { # More than one possible miR fam, skipping
-        next
-      }
-    }
-    if(ts_fam_first_mir %in% act_mirs_matches[,1]){
-      if(ts_fam_alt$`Family Conservation?` >= 1){
-        mir_gene_pairs$miR_act_family[i] <- act_mirs_matches[act_mirs_matches[,1] == ts_fam_first_mir, 2]
-      }
-    }
-  }
-}                                                               
-```
-
-Filter for miRNAs for which we have activity data and remove duplicate gene-miR-family pairs
-
-```{r}
-mir_gene_pairs <- mir_gene_pairs[!(is.na(mir_gene_pairs$miR_act_family)), ]
-mir_gene_pairs <- as.data.frame(cbind(mir_gene_pairs$intron_id, mir_gene_pairs$miR_act_family))
-mir_gene_pairs <- mir_gene_pairs[!(duplicated(mir_gene_pairs)), ]
-colnames(mir_gene_pairs) <- c("gene", "miR_act_family")
-```
-
-Initialize tables that will be filled with the correlation coefficients, p-values and r-squared 
-
-```{r}
-coeffs <- matrix(NA, nrow=nrow(mir_gene_pairs), ncol = length(cancers))
-row.names(coeffs) <- paste(mir_gene_pairs$intron_id, mir_gene_pairs$miR_act_family, sep="_")
-colnames(coeffs) <- cancers
-
-pvals <- coeffs
-r2 <- coeffs
-```
-
-For for each pri-miRNA-host-gene pair selected above, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
-
-```{r}
-for (i in 1:nrow(mir_gene_pairs))
-{
-  # Filter dfi table for the gene of interest
-  dfi_gene <- lapply(dfi_data, function(x) unlist(x[mir_gene_pairs$intron_id[i], ]))
-  dfi_gene <- unlist(dfi_gene)
-
-  if(sum(is.na(dfi_gene)) == length(dfi_gene))
-  {
-    next
-  }
+dim(dfi_sig_hosts)
+cor_results <- dfi_sig_hosts %>%
+  # Keep only primary tumor samples ending in -01
+  filter(grepl("-01$", sample)) %>%
   
-  # Make a vector indicating the cancer type of each sample
-  nb_samples_cancers <- unlist(lapply(dfi_data, function(x) ncol(x)))
-  cancers_vector <- rep(cancers, nb_samples_cancers)
-  
-  # Merge into table containing all samples of all cancer types and indicating the cancer type
-  dfi_complete <- as.data.frame(cbind(dfi_gene, cancers_vector))
-  colnames(dfi_complete) <- c("GOI_dfi", "cancer")
-  
-  # Filter miRNA activity for the miRNA of interest
-  miRNA <- as.vector(mir_gene_pairs$miR_act_family[i])
-  miR_cancers <- as.data.frame(cbind(row.names(miR_act), miR_act[,miRNA], as.vector(miR_act$cancers_vector)))
-  colnames(miR_cancers) <- c("samples", "miR_act", "cancer")
-  
-  # In each cancer type, compute the pearson correlation coefficient and p-value
-  for (cancer in cancers)
-  {
-    # Make table with the samples, dfi for the host gene and miRNA activity in that cancer type, removing normal samples
-    cancer_data <- dfi_complete[dfi_complete$cancer== cancer, ]
-    row.names(cancer_data) <- gsub("-1$", "", row.names(cancer_data))
-    cancer_data <- cancer_data[grep("\\-01$", row.names(cancer_data)), ]
-    cancer_data$miRNA_act <- NA
-    cancer_miR <- miR_cancers[miR_cancers$cancer == cancer, ]
-    if (nrow(cancer_miR) == 0)
-    {
-      next
-    }
-    cancer_data$miRNA_act <- cancer_miR[match(row.names(cancer_data), cancer_miR$samples),]$miR_act
-    
-    # Correlation
-    corr <- cor.test(as.numeric(as.vector(cancer_data$GOI_dfi)), as.numeric(as.vector(cancer_data$miRNA_act)))
-    coeffs[i, cancer] <- corr$estimate
-    pvals[i, cancer] <- corr$p.value
-    fit <- lm(as.numeric(as.vector(cancer_data$miRNA_act)) ~ as.numeric(as.vector(cancer_data$GOI_dfi)))
-    r2[i, cancer] <- summary(fit)$r.squared
-    
-    
-  }
-}
+  # Correlate within each cancer and gene/pri-miR/family pair
+  group_by(gene_id, pri_mir_id, miR_family, cancer) %>%
+  summarise(
+    test = list(cor.test(coefficient_log2, dfi, method = "pearson")),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    r = sapply(test, \(x) unname(x$estimate)),
+    p = sapply(test, \(x) x$p.value),
+    r_squared = r^2
+  ) %>%
+  select(
+    gene_id, pri_mir_id, miR_family, cancer,
+    r, p, r_squared
+  )
+dim(cor_results)
+head(cor_results)
+
+# Sort by median r in each cancer, keeping the cancers together
+medians <- aggregate(cor_results$r, list(cor_results$cancer), median)
+order_cancers <- as.vector(medians[,1][order(medians[,2], decreasing = T)])
+cor_results$cancer <- factor(cor_results$cancer, levels = order_cancers)
+cor_results <- cor_results %>% arrange(cancer)
 ```
 
-Remove rows and columns with only NAs
-```{r}
-rows_keep <- which(rowSums(is.na(coeffs)) != ncol(coeffs))
-cols_keep <- which(colSums(is.na(coeffs)) != nrow(coeffs))
-coeffs <- coeffs[rows_keep, cols_keep]
-pvals <- pvals[rows_keep, cols_keep]
-r2 <- r2[rows_keep, cols_keep]
-```
-
-Compute signed r-squared
+# Violin plots of correlation coefficients 
 
 ```{r}
-signs <- sign(coeffs)
-signed_r2 <- abs(r2) * signs
-```
-
-In preparation to make the violin plots, make a table with all host-gene-miRNA pairs and all cancer types, indicating the correlation coefficients 
-
-```{r}
-signed_r2 <- data.table(signed_r2, keep.rownames = T)
-miRs_table <- melt(signed_r2, id.vars=1)
-colnames(miRs_table) <- c("hostGene_miR_pairs", "cancer", "signed_r2")
-```
-
-Sort by average signed_r2 in each cancer, keeping the cancers together
-
-```{r}
-means <- aggregate(as.vector(miRs_table$signed_r2), list(miRs_table$cancer), mean)
-order_cancers <- means[,1][order(means[,2], decreasing = T)]
-miRs_table$cancer <- reorder.factor(miRs_table$cancer, new.order=order_cancers)
-miRs_table <- miRs_table %>% arrange(cancer)
-miRs_table <- as.data.frame(miRs_table %>% 
-        group_by(cancer) %>%
-        arrange(desc(signed_r2), .by_group = TRUE))
-```
-
-Add the correlation coefficients to the table 
-
-```{r}
-miRs_table_coeff <- miRs_table
-miRs_table_coeff$corr <- sign(miRs_table_coeff$signed_r2) * sqrt(abs(miRs_table_coeff$signed_r2))
-miRs_table_coeff <- miRs_table_coeff[,-3]
-saveRDS(miRs_table, "TCGA_pancancer_miRgeneDfiVSmiRact_fltrGenesSigPosCorrDfeDfi_res.rds")
-```
-
-Draw the violin plots of correlation coefficients (can be modified to draw signed r2 as well)
-
-```{r}
-ggplot(miRs_table_coeff, aes(x = cancer, y = corr)) + 
+p <- ggplot(cor_results, aes(x = cancer, y = r)) + 
   geom_violin(fill = "grey80", colour = "#3366FF") +
   geom_boxplot(width = 0.07) +
   theme_classic() +
-  ylab("Pearson correlation") + 
-  xlab("Cancer Type") + 
-  theme(axis.text=element_text(size=16),
-        axis.title=element_text(size=20),
-        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  theme(legend.position = "none") +
+  ylab("Pearson r") + 
+  xlab("") + 
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none") +
   geom_hline(yintercept=0, linetype="dashed", 
-              color = "black", size=0.5)
-```
+            color = "black", size=0.5)
+p
 
-Draw the corresponding heatmap (can also be modified to show signed r2)
-
-```{r}
-palette <- colorRampPalette(c("blue", "white", "red"))
-dat_htmp <- data.matrix(signed_r2)[, as.vector(unique(miRs_table$cancer))]
-dat_htmp_coeffs <- sign(dat_htmp) * sqrt(abs(dat_htmp))
-pdf("TCGA_pancancer_miRgeneDfiVSmiRact_fltrGenesSigPosCorrDfeDfi_pearson_htmp.pdf", width=18, height=7)
-heatmap.2(dat_htmp_coeffs, trace="none", col=palette, cexRow=0.01, cexCol=2.5,  breaks=seq(-1,1,length.out=50), mar=c(10,20), keysize=1, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'), density.info = "none", key.par = list(cex=2), lhei=c(1,2), lwid = c(1,5), Colv = F, key.title = "", key.xlab = "Pearson correlation")
+pdf(here("TCGA", "output", "figures", "TCGA_miRNA_act_vs_transcription_violin.pdf"), 7, 3.5)
+p
 dev.off()
 ```
 
-![Heatmap of associations between miRNA activity and transcription](TCGA_pancancer_miRgeneDfiVSmiRact_fltrGenesSigPosCorrDfeDfi_pearson_htmp.pdf)
-
-Average correlation between miRNA activity and rate of transcription of their primary transcripts
+# Corresponding heatmap 
 
 ```{r}
-mean(miRs_table_coeff$corr)
+# Convert long to wide format with host gene/pri-mir/family pair as rows and cancers as columns
+dat_htmp <- cor_results[, -(1:3)]
+dat_htmp$pair <- paste(cor_results$gene_id, cor_results$pri_mir_id, cor_results$miR_family, sep = "_")
+
+dat_htmp <- dat_htmp %>%
+  select(pair, cancer, r) %>%
+  pivot_wider(
+    names_from = cancer,
+    values_from = r
+  )
+
+dat_htmp <- column_to_rownames(dat_htmp, "pair")
+dat_htmp <- data.matrix(dat_htmp)
+
+# Draw the heatmap
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf(here("TCGA", "output", "figures", "TCGA_miRNA_act_vs_transcription_htmp.pdf"), width=18, height=7)
+heatmap.2(dat_htmp, trace="none", col=palette, cexRow=0.01, cexCol=2,  breaks=seq(-1,1,length.out=50), mar=c(10,10), keysize=1, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'), density.info = "none", key.par = list(cex=2), lhei=c(1,1.2), lwid = c(1,2), Colv = F, key.title = "", key.xlab = "Pearson r")
+dev.off()
+```
+
+# Average correlation between miRNA activity and rate of transcription of their primary transcripts
+
+```{r}
+mean(cor_results$r)
 ```
 
 Example scatter plot for miR-193 in STAD
 
 ```{r}
+<==
 miR <- "miR-139"
 gene <- "ENSG00000186642"
 cancer="STAD"
@@ -589,3 +502,6 @@ text(1, 0.08, paste("r = ", round(corr$estimate, 3), sep=""))
 
 ```
 
+```{r}
+sessionInfo()
+```
