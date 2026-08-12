@@ -353,6 +353,12 @@ p
 dev.off()
 ```
 
+# Average coefficient of correlationbetween the activity and abundance of matching mature miRNA - miRNA family pairs. Across all tumors of all cancers
+
+```{r}
+mean(miRs_table$correlation)
+```
+
 # Heatmap
 
 ```{r}
