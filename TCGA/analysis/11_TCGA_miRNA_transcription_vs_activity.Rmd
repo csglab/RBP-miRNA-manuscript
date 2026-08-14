@@ -122,13 +122,17 @@ dfi_long <- map_df(dfi_data_list, ~{
     pivot_longer(-c(gene_id, cancer), names_to = "sample", values_to = "dfi")
 })
 
+saveRDS(dfi_long, here("TCGA", "output", "rds", "TCGA_dfi_long.rds"))
+
 dfe_long <- map_df(dfe_data_list, ~{
   .x |>
     pivot_longer(-c(gene_id, cancer), names_to = "sample", values_to = "dfe")
 })
+
+
 ```
 
-# For each cancer type, for each miRNA host gene, test the correlation between changes in mRNA abundance (dfe) and transcription (dfi)
+# For each cancer type, for each miRNA host gene, test the correlation between changes in mRNA abundance (dfe) and transcription (dfi) across tumor samples
 
 ```{r}
 # Compute correlations for each gene-cancer combination
@@ -180,9 +184,6 @@ dfe_dfi_results <- dfe_dfi_results |>
     fdr = p.adjust(p_value, method = "fdr"),
     signed_r2 = sign(correlation) * r_squared
   )
-
-# Save results
-# saveRDS(dfe_dfi_results, here("TCGA", "output", "rds", "TCGA_miRhostGenes_dfeVSdfi_results.rds"))
 ```
 
 # Heatmap of correlation coefficients for dfe vs dfi for all genes that contain a miRNA in their introns
@@ -270,6 +271,8 @@ mir_gene_pairs_sig$miR_family[is.na(mir_gene_pairs_sig$miR_family)] <- fams$miR_
 mir_gene_pairs_sig[is.na(mir_gene_pairs_sig$miR_family), ]
 dim(mir_gene_pairs_sig)
 
+saveRDS(mir_gene_pairs_sig, here("TCGA", "output", "rds", "TCGA_selected_miRNA_host_genes.rds"))
+
 # Remove gene_pri-mir pairs without any found miRNA family in the TS annotation
 mir_gene_pairs_sig <- mir_gene_pairs_sig[!(is.na(mir_gene_pairs_sig$miR_family)), ]
 dim(mir_gene_pairs_sig)
@@ -281,6 +284,9 @@ miR_act$sample_name <- gsub("\\.", "-", miR_act$sample_name)
 # Retain gene_pri-mir pairs that are present in the miRNA activity data
 mir_gene_pairs_sig <- mir_gene_pairs_sig[mir_gene_pairs_sig$miR_family %in% miR_act$miRNA, ]
 dim(mir_gene_pairs_sig)
+
+# Filter for unique gene-miR family pairs
+mir_gene_pairs_sig <- unique(mir_gene_pairs_sig[, c("gene_id", "miR_family")])
 ```
 
 ```{r}
@@ -290,7 +296,7 @@ dfi_sig_hosts <- dfi_long[dfi_long$gene_id %in% mir_gene_pairs_sig$gene_id, ]
 dfi_sig_hosts <- dfi_sig_hosts %>%
   left_join(
     mir_gene_pairs_sig %>%
-      select(gene_id, pri_mir_id, miR_family),
+      select(gene_id, miR_family),
     by = "gene_id", 
     relationship =
   "many-to-many"
@@ -316,7 +322,7 @@ dfi_sig_hosts <- dfi_sig_hosts %>%
 dim(dfi_sig_hosts)
 ```
 
-For each pri-miRNA-host-gene pair retained, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
+For each host-gene-miRNA-family pair retained, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
 
 ```{r}
 dim(dfi_sig_hosts)
@@ -324,8 +330,8 @@ cor_results <- dfi_sig_hosts %>%
   # Keep only primary tumor samples ending in -01
   filter(grepl("-01$", sample)) %>%
   
-  # Correlate within each cancer and gene/pri-miR/family pair
-  group_by(gene_id, pri_mir_id, miR_family, cancer) %>%
+  # Correlate within each cancer and gene/family pair
+  group_by(gene_id, miR_family, cancer) %>%
   summarise(
     test = list(cor.test(coefficient_log2, dfi, method = "pearson")),
     .groups = "drop"
@@ -336,7 +342,7 @@ cor_results <- dfi_sig_hosts %>%
     r_squared = r^2
   ) %>%
   select(
-    gene_id, pri_mir_id, miR_family, cancer,
+    gene_id, miR_family, cancer,
     r, p, r_squared
   )
 dim(cor_results)
@@ -374,9 +380,9 @@ dev.off()
 # Corresponding heatmap 
 
 ```{r}
-# Convert long to wide format with host gene/pri-mir/family pair as rows and cancers as columns
-dat_htmp <- cor_results[, -(1:3)]
-dat_htmp$pair <- paste(cor_results$gene_id, cor_results$pri_mir_id, cor_results$miR_family, sep = "_")
+# Convert long to wide format with host gene/mir family pair as rows and cancers as columns
+dat_htmp <- cor_results[, -(1:2)]
+dat_htmp$pair <- paste(cor_results$gene_id, cor_results$miR_family, sep = "_")
 
 dat_htmp <- dat_htmp %>%
   select(pair, cancer, r) %>%

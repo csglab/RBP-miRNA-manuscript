@@ -1,0 +1,376 @@
+---
+title: 'Association between miRNA transcription and miRNA abundance across TCGA tumors'
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+# Load libraries
+
+```{r}
+library(dplyr)
+library(gplots)
+library(ggplot2)
+library(vioplot)
+library(data.table)
+library(beeswarm)
+```
+
+# Load the list of miRNA host genes and corresponding pri-miRNA and miRNA family 
+
+```{r}
+mir_gene_pairs <- readRDS(here("TCGA", "output", "rds", "TCGA_selected_miRNA_host_genes.rds"))
+mir_gene_pairs_fltr <- unique(mir_gene_pairs[, c("gene_id", "pri_mir_id", "pri_mir_id_2")]) 
+```
+
+# Since each pri-miRNA will be processed into two mature miRNAs (arms), duplicate each entry and add -5p or -3p to the names
+
+```{r}
+mir_gene_pairs_fltr$miR <- paste(mir_gene_pairs_fltr$pri_mir_id, "-3p", sep="")
+mir_gene_pairs_fltr_5p <- mir_gene_pairs_fltr
+mir_gene_pairs_fltr_5p$miR <- gsub("-3p", "-5p", mir_gene_pairs_fltr_5p$miR)
+mir_gene_pairs_fltr <- rbind(mir_gene_pairs_fltr, mir_gene_pairs_fltr_5p)
+mir_gene_pairs_fltr <- mir_gene_pairs_fltr[order(mir_gene_pairs_fltr$gene), ]
+dim(mir_gene_pairs_fltr)
+```
+
+# Load the changes in transcription
+
+```{r}
+dfi_data <- readRDS(here("TCGA", "output", "rds", "TCGA_dfi_long.rds"))
+```
+
+# For each mature miRNA, correlate abundance and transcription of host gene across tumor samples
+
+```{r}
+# Load miRNA expression files
+miR_expr_data <- sapply(
+  unique(dfi_data$cancer),
+  function(cancer) {
+    read.table(
+      here("TCGA", "data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
+      header = TRUE
+    )
+  },
+  simplify = FALSE
+)
+```
+
+```{r}
+# Helper function to process a single gene-miRNA pair
+corr_single_pair <- function(i, mir_gene_pairs_fltr, dfi_data, miR_expr_data) {
+  gene_id <- mir_gene_pairs_fltr$gene_id[i]
+  miRNA <- mir_gene_pairs_fltr$miR[i]
+  
+  # Filter dfi table for the gene of interest
+  dfi_gene <- dfi_data[dfi_data$gene_id == gene_id, ]
+  
+  if (nrow(dfi_gene) == 0) {
+    return(NULL)
+  }
+  
+  # Apply correlation computation across cancers 
+  cancer_results <- lapply(unique(dfi_gene$cancer), function(cancer) {
+    miR_expr <- miR_expr_data[[cancer]]
+    
+    # Check if miRNA exists in the abundance data
+    if (!(miRNA %in% row.names(miR_expr))) {
+      return(NULL)
+    }
+    
+    # Extract and format miRNA abundance
+    miR_cancer <- as.data.frame(cbind(colnames(miR_expr), unlist(miR_expr[miRNA, ])))
+    colnames(miR_cancer) <- c("sample", "miR_expr")
+    miR_cancer$sample <- gsub("\\.", "-", miR_cancer$sample)
+    miR_cancer <- miR_cancer[grep("-01$", miR_cancer$sample), ]
+    
+    # Skip if too many missing values (>20%)
+    if (sum(is.na(miR_cancer$miR_expr)) / nrow(miR_cancer) > 0.2) {
+      return(NULL)
+    }
+    
+    # Combine with host gene transcription data
+    cancer_data <- dfi_gene[dfi_gene$cancer == cancer, ]
+    cancer_data <- cancer_data[grep("\\-01$", cancer_data$sample), ]
+    cancer_data$miRNA_expr <- as.numeric(
+      miR_cancer[match(row.names(cancer_data), miR_cancer$sample), ]$miR_expr
+    )
+    cancer_data <- cancer_data[rowSums(is.na(cancer_data)) == 0, ]
+    
+    if (nrow(cancer_data) == 0) {
+      return(NULL)
+    }
+    
+    # Compute correlation
+    corr <- cor.test(
+      as.numeric(cancer_data$dfi),
+      cancer_data$miRNA_expr
+    )
+    
+    # Return result as a data frame row
+    data.frame(
+      miRNA = miRNA,
+      cancer = cancer,
+      coefficient = corr$estimate,
+      p_value = corr$p.value,
+      r_squared = (corr$estimate)^2,
+      stringsAsFactors = FALSE
+    )
+  })
+  
+  # Combine results for this pair
+  do.call(rbind, Filter(Negate(is.null), cancer_results))
+}
+
+# Apply across all gene-miRNA pairs and combine into a single long df
+results_list <- lapply(
+  1:nrow(mir_gene_pairs_fltr),
+  corr_single_pair,
+  mir_gene_pairs_fltr = mir_gene_pairs_fltr,
+  dfi_data = dfi_data,
+  miR_expr_data = miR_expr_data
+)
+
+corr_results_long <- do.call(rbind, Filter(Negate(is.null), results_list))
+row.names(corr_results_long) <- NULL
+```
+
+```{r}
+# Remove rows with all NAs and miRNAs with >20% missing data
+corr_results_long <- corr_results_long |>
+  filter(!is.na(coefficient)) |>
+  group_by(miRNA) |>
+  filter(sum(!is.na(coefficient)) / n() > 0.8) |>
+  ungroup() |>
+  group_by(cancer) |>
+  filter(sum(!is.na(coefficient)) > 0) |>
+  ungroup() |>
+  distinct(miRNA, cancer, .keep_all = TRUE)
+
+# Add additional metrics 
+corr_results_long <- corr_results_long |>
+  mutate(
+    signed_r2 = sign(coefficient) * r_squared,
+    neg_log10_pvalue = abs(log10(p_value)),
+    .after = r_squared
+  )
+
+# FDR correction across all tests
+pvalue_fdr <- p.adjust(corr_results_long$p_value, method = "fdr")
+
+corr_results_long <- corr_results_long |>
+  mutate(FDR = pvalue_fdr, .after = p_value)
+```
+
+# Filter for miRNAs that are differentially expressed in each cancer type
+
+First initialize a list to store the differentially expressed miRNAs.
+
+```{r}
+<==
+miRs <- row.names(coeffs)
+miRs_cancers <- as.list(rep(NA, ncol(coeffs)))
+names(miRs_cancers) <- colnames(coeffs)
+```
+
+Fill in the list. See comments within code for specific steps.
+
+```{r}
+for (cancer in colnames(coeffs))
+{
+  # Load miRNA expression data for this cancer, retrived from Firebrowse 
+  miR_expr <- read.table(paste(cancer, ".miRseq_mature_RPM_log2.txt", sep=""), header=T, row.names = 1)
+  
+  # Select for paired samples
+  patients_normal <- colnames(miR_expr)[grep("\\.11A$", substr(colnames(miR_expr),1,16))]
+  patients_normal <- substr(patients_normal, 1, 12)
+  
+  if (length(patients_normal) == 0)
+  {
+    next
+  }
+  
+  patients_tumor <- colnames(miR_expr)[grep("\\.01A$", substr(colnames(miR_expr),1,16))]
+  patients_tumor <- substr(patients_tumor, 1, 12)
+  
+  patients_matched <- patients_normal[patients_normal %in% patients_tumor]
+       
+  miR_expr_matched <- miR_expr[, substr(colnames(miR_expr), 1, 12) %in% patients_matched]
+  row.names(miR_expr_matched) <- gsub("\\|.*", "", row.names(miR_expr_matched))
+  colnames(miR_expr_matched) <- substr(colnames(miR_expr_matched), 1, 16)
+  
+  # Separate tumor from normal samples, put the columns
+  normal <- colnames(miR_expr_matched)[grep("\\.11A$", colnames(miR_expr_matched))]
+  tumor <- colnames(miR_expr_matched)[grep("\\.01A$", colnames(miR_expr_matched))]
+  
+  miRNA_expression_T <- miR_expr_matched[, sort(tumor)]
+  miRNA_expression_N <- miR_expr_matched[, sort(normal)]
+  
+  # Create a table to store the differential expression data for each miRNA (tumor vs paired normal samples)
+  result_table <- data.frame(matrix(ncol = 2, nrow = length(miRs)))
+  row.names(result_table) <- miRs
+  colnames(result_table) <- c("log2FC", "t-test_pval")
+  
+  # Compute the differential expression of the miRNAs using a paired t-test for matched samples
+  for (miR in miRs)
+  {
+    specific_miR_expr_T <- unlist(miRNA_expression_T[miR,])
+    specific_miR_expr_N <- unlist(miRNA_expression_N[miR,])
+    t_test <- t.test(as.numeric(as.vector(specific_miR_expr_T)), as.numeric(as.vector(specific_miR_expr_N)), paired=TRUE)
+    
+    result_table[miR,1] <- t_test$estimate # log2FC
+    result_table[miR,2] <- t_test$p.value 
+  }  
+  
+  # FDR correction
+  result_table$FDR <- p.adjust(result_table$`t-test_pval`, method="fdr")
+  
+  # Filter for miRNAs that are significantly differentially expressed
+  sig_mirs <- result_table[abs(result_table)$log2FC > 1 & result_table$FDR < 0.05, ]
+  
+  # Record in list
+  miRs_cancers[[cancer]] <- row.names(sig_mirs)
+}
+```
+
+Remove cancers types with NAs, meaning they don't have normal samples in the miRNA expression data. 
+
+```{r}
+miRs_cancers <- miRs_cancers[!(is.na(miRs_cancers))]
+```
+
+In preparation to make the violin plot, make a table containing all miRNAs and all cancer types, with columns to contain the signed r-squared (miRNA transcription vs abundance), p-valye, and cancer type.
+
+```{r}
+miRs_table <- as.data.frame(matrix(NA, nrow=sum(unlist(lapply(miRs_cancers, length))), ncol=5))
+colnames(miRs_table) <- c("miRs", "signed_r2", "-log10(p-value)", "FDR", "cancer")
+miRs_table$miRs <- unlist(miRs_cancers)
+miRs_table$cancer <- rep(names(miRs_cancers), unlist(lapply(miRs_cancers, length)))
+```
+
+Fill the table
+
+```{r}
+for (i in 1:nrow(miRs_table))
+{
+  miRs_table[i, ]$signed_r2 <- signed_r2[miRs_table$miRs[i], miRs_table$cancer[i]]
+  miRs_table[i, ]$`-log10(p-value)` <- minusLogPvals[miRs_table$miRs[i], miRs_table$cancer[i]]
+  miRs_table[i, ]$FDR <- FDR[miRs_table$miRs[i], miRs_table$cancer[i]]
+}
+```
+
+Remove rows with NAs, corresponding to miRNAs that did not have (sufficient) expression data
+
+```{r}
+miRs_table <- miRs_table[rowSums(is.na(miRs_table)) == 0, ]
+```
+
+Sort by average signed_r2 in each cancer type
+
+```{r}
+medians <- aggregate(miRs_table$signed_r2, list(miRs_table$cancer), median)
+order_cancers <- medians[,1][order(medians[,2], decreasing = T)]
+miRs_table$cancer <- reorder.factor(miRs_table$cancer, new.order=order_cancers)
+miRs_table <- miRs_table %>% arrange(cancer)
+miRs_table <- as.data.frame(miRs_table %>% 
+        group_by(cancer) %>%
+        arrange(desc(signed_r2), .by_group = TRUE))
+```
+
+Add correlation coefficients for later use and save
+
+```{r}
+miRs_table$corr <- sign(miRs_table$signed_r2) * sqrt(abs(miRs_table$signed_r2))
+saveRDS(miRs_table, "TCGA_pancancer_miRgeneDfiVSmiRexpr_fltrGenesSigPosCorrDfeDfi_fltrSigDEmiRs_res.rds")
+```
+
+Draw the violin plot
+
+```{r}
+ggplot(miRs_table, aes(x = cancer, y = signed_r2)) + 
+  geom_violin(fill = "grey80", colour = "#3366FF", width=1.2) +
+  geom_boxplot(width = 0.07) +
+  theme_classic() +
+  ylab("Signed r-squared") + 
+  xlab("Cancer Type") + 
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=20)) +
+  theme(legend.position = "none") +
+  geom_hline(yintercept=0, linetype="dashed", 
+              color = "black", size=0.5)
+```
+
+Get signed r2 data after clustering and filtering for miRNAs that have significant differential expression in at least one cancer type
+
+```{r}
+signed_r2_fltr <- signed_r2[row.names(signed_r2) %in% unlist(miRs_cancers), ]
+htmp <- heatmap.2(data.matrix(signed_r2_fltr), hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'))
+signed_r2_clust <- signed_r2_fltr[rev(htmp$rowInd), htmp$colInd]
+minusLogPvals_clust <- minusLogPvals[row.names(signed_r2_clust), colnames(signed_r2_clust)]
+FDR_clust <- FDR[row.names(signed_r2_clust), colnames(signed_r2_clust)]
+```
+
+Order the columns in the same way as for the violin plot
+
+```{r}
+dat_htmp <- data.matrix(signed_r2_fltr)[, as.vector(unique(miRs_table$cancer))]
+```
+
+Draw the heatmap
+
+```{r}
+palette <- colorRampPalette(c("blue", "white", "red"))
+pdf("TCGA_pancancer_miRgeneDfiVSmiRexpr_fltrGenesSigPosCorrDfeDfi_signed_r2_fltrSigDEmiRs_htmp.pdf", width=25, height=10)
+heatmap.2(dat_htmp, trace="none", col=palette, cexRow=0.01, cexCol=2.5,  breaks=seq(-1,1,length.out=50), mar=c(10,20), keysize=1, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'), density.info = "none", key.par = list(cex=2), lhei=c(1,2), lwid = c(1,5), Colv = F, key.title = "", key.xlab = "Signed r-squared")
+dev.off()
+```
+
+# Comparison of three associations: A) miRNA abundance vs transcription, B) activity vs abundance and C) activity vs transcription
+
+Load the correlation coefficients from the 3 analyses: A) miRNA abundance vs transcription (output from this current notebook), B) activity vs abundance (output from TCGA_miRNA_activity_vs_abundance.Rmd) and C) activity vs transcription (output from TCGA_miRNA_transcription_vs_activity.Rmd)
+
+```{r}
+expr_transc <- readRDS("TCGA_pancancer_miRgeneDfiVSmiRexpr_fltrGenesSigPosCorrDfeDfi_fltrSigDEmiRs_res.rds")
+act_expr <- readRDS("TCGA_pancancer_miRfamiliesSigActAtLeast10T_corrFamActVSfamMembersExpr_res.rds")
+act_transc <- readRDS("TCGA_pancancer_miRgeneDfiVSmiRact_fltrGenesSigPosCorrDfeDfi_res.rds")
+```
+
+Add correlation coefficients where not already indicated
+
+```{r}
+act_transc$correlation <- sqrt(abs(act_transc$signed_r2)) * sign(act_transc$signed_r2)
+```
+
+Make a data table for the beeswarm plot
+
+```{r}
+dt <- list(expr_transc$corr, act_expr$correlation, act_transc$correlation)
+names(dt) <- c("miRNA abundance\nvs transcription", "miRNA activity\nvs abundance", "miRNA activity\nvs transcription")
+```
+
+Draw the beeswarm plot
+
+```{r}
+plt <- beeswarm(dt,
+                col = c("olivedrab3", "slateblue3", "dodgerblue"), pch = c(16,16,16),
+                method = "swarm",
+                cex=0.3, corral = "random",
+                ylab="Pearson correlation",
+                xlab = "",
+                cex.axis=0.8
+)
+boxplot(dt, add = T, outline=F, col=rgb(0,0,0, alpha=0.001), boxlwd = 2, boxwex=0.5, whisklty = 1, staplelwd = 2, medlwd=2, whisklwd=2, names=c("","",""), yaxt="n") # See https://stackoverflow.com/questions/28889977/r-boxplot-how-to-customize-the-appearance-of-the-box-and-whisker-plots-e-g-r
+```
+
+```{r}
+sessionInfo()
+```
