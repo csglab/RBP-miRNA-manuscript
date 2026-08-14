@@ -22,9 +22,9 @@ library(GenomicRanges)
 library(data.table)
 library(purrr)
 library(tibble)
+library(tidyr)
 library(stringr)
 library(dplyr)
-library(tidymodels)
 library(gplots)
 library(ggplot2)
 ```
@@ -84,25 +84,9 @@ write.csv(mir_gene_pairs, file=here("TCGA", "output", "supplementary_tables", "G
 # Load the estimates of changes in mRNA abundance (dfe) and transcription (dfi) across TCGA tumors, from BETAS
 
 ```{r}
-# Helper function to load and format BETAS data
-load_betas_data <- function(files) {
-  map_df(files, function(f) {
-    dt <- fread(f) |>
-      as.data.frame()
-    rownames(dt) <- dt[[1]]
-    dt[[1]] <- NULL
-    dt
-  }, .id = "source") |>
-    rownames_to_column("gene_id") |>
-    pivot_longer(
-      cols = -c(source, gene_id),
-      names_to = "sample",
-      values_to = "value"
-    )
-}
-
 dfi_files <- Sys.glob(here("TCGA", "data", "TCGA-*.BETAS_dfi.csv"))
 dfe_files <- Sys.glob(here("TCGA", "data", "TCGA-*.BETAS_dfe.csv"))
+stopifnot(all(gsub("BETAS.*", "", dfi_files) == gsub("BETAS.*", "", dfe_files)))
 
 # Extract cancer type from filename
 cancers <- dfi_files |>
@@ -148,6 +132,9 @@ dfe_long <- map_df(dfe_data_list, ~{
 
 ```{r}
 # Compute correlations for each gene-cancer combination
+stopifnot(all(dfi_long$sample == dfe_long$sample))
+stopifnot(all(dfi_long$gene_id == dfe_long$gene_id))
+
 dfe_dfi_results <- bind_cols(
   dfi_long |> select(gene_id, cancer, sample, dfi),
   dfe_long |> select(dfe)
@@ -155,9 +142,6 @@ dfe_dfi_results <- bind_cols(
   
   # Filter to tumor samples (those ending in -01)
   filter(str_detect(sample, "\\-01$")) |>
-  
-  # Remove the -1 suffix
-  mutate(sample = str_remove(sample, "\\-1$")) |>
   
   # Filter to genes in mir_gene_pairs
   semi_join(
@@ -194,7 +178,7 @@ dfe_dfi_results <- bind_cols(
 dfe_dfi_results <- dfe_dfi_results |>
   mutate(
     fdr = p.adjust(p_value, method = "fdr"),
-    signed_r2 = sign(correlation) * sqrt(abs(r_squared))
+    signed_r2 = sign(correlation) * r_squared
   )
 
 # Save results
@@ -332,7 +316,7 @@ dfi_sig_hosts <- dfi_sig_hosts %>%
 dim(dfi_sig_hosts)
 ```
 
-# For each pri-miRNA-host-gene pair retained, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
+For each pri-miRNA-host-gene pair retained, for each cancer type, correlate miRNA activity and host gene transcriptional changes across samples
 
 ```{r}
 dim(dfi_sig_hosts)
@@ -417,89 +401,93 @@ dev.off()
 mean(cor_results$r)
 ```
 
-Example scatter plot for miR-193 in STAD
+# Example scatter plot for miR-590-3p in LIHC
+
+Helper functions to create scatter plots
 
 ```{r}
-<==
-miR <- "miR-139"
-gene <- "ENSG00000186642"
-cancer="STAD"
+extract_mir_activity <- function(cancer, miR_act, miRNAs) {
+  miR_act |>
+    filter(cancer_type == cancer, sample_type == "tumor") |>
+    filter(miRNA %in% miRNAs) |>
+    select(sample_name, miRNA, coefficient_log2)
+}
 
-# Filter dfi table for the gene of interest
-dfi_gene <- lapply(dfi_data, function(x) unlist(x[gene, ]))
-dfi_gene <- unlist(dfi_gene)
-
-# Make a vector indicating the cancer type of each sample
-nb_samples_cancers <- unlist(lapply(dfi_data, function(x) ncol(x)))
-cancers_vector <- rep(cancers, nb_samples_cancers)
-
-# Merge into table containing all samples of all cancer types and indicating the cancer type
-dfi_complete <- as.data.frame(cbind(dfi_gene, cancers_vector))
-colnames(dfi_complete) <- c("GOI_dfi", "cancer")
-
-# Filter miRNA activity for the miRNA of interest
-miRNA <- as.vector(miR)
-miR_cancers <- as.data.frame(cbind(row.names(miR_act), miR_act[,miRNA], as.vector(miR_act$cancers_vector)))
-colnames(miR_cancers) <- c("samples", "miR_act", "cancer")
-
-# Make table with the samples, dfi for the host gene and miRNA activity in that cancer type, removing normal samples
-cancer_data <- dfi_complete[dfi_complete$cancer== cancer, ]
-row.names(cancer_data) <- gsub("-1$", "", row.names(cancer_data))
-cancer_data <- cancer_data[grep("\\-01$", row.names(cancer_data)), ]
-cancer_data$miRNA_act <- NA
-cancer_miR <- miR_cancers[miR_cancers$cancer == cancer, ]
-cancer_data$miRNA_act <- cancer_miR[match(row.names(cancer_data), cancer_miR$samples),]$miR_act
-
-# Correlation
-corr <- cor.test(as.numeric(as.vector(cancer_data$GOI_dfi)), as.numeric(as.vector(cancer_data$miRNA_act)))
-
-# Scatter plot
-plot(as.numeric(as.vector(cancer_data$GOI_dfi)), as.numeric(as.vector(cancer_data$miRNA_act)), pch = 16, cex=0.5, xlab="Host gene transcription log(FC)", ylab="miRNA activity")
-abline(lm(as.numeric(as.vector(cancer_data$miRNA_act)) ~ as.numeric(as.vector(cancer_data$GOI_dfi))), col = 4, lwd = 2)
-text(-4, 0.025, paste("r = ", round(corr$estimate, 3), sep=""))
+plot_mir_transc_vs_activity <- function(cancer, miRNA_fam, miR_act, dfi_long, save_pdf = NULL) {
+  # Get the host gene of the pri-miRNA
+  host_gene <- mir_gene_pairs_sig$gene_id[mir_gene_pairs_sig$miR_family == miRNA_fam]
+  
+  stopifnot(length(host_gene) == 1)
+  
+  # dfi for that cancer and host gene
+  dfi_host <- dfi_long[dfi_long$cancer == cancer & dfi_long$gene_id == host_gene,  ]
+  
+  # Extract activity for the miRNA in that cancer (long format)
+  miR_act_long <- extract_mir_activity(cancer, miR_act, miRNA_fam)
+  
+  # Match samples between activity and dfi
+  common_samples <- intersect(unique(miR_act_long$sample_name), dfi_host$sample)
+  dfi_host <- dfi_host |> filter(sample %in% common_samples)
+  miR_act_long <- miR_act_long |> filter(sample_name %in% common_samples)
+  
+  # Sort by sample name for correct alignment
+  miR_act_long <- miR_act_long |> arrange(factor(sample_name, levels = common_samples))
+  dfi_host <- dfi_host |> arrange(factor(sample, levels = common_samples))
+  dfi_samples <- dfi_host$sample
+  dfi_vals <- dfi_host$dfi
+  act_samples <- miR_act_long$sample_name
+  act_vals <- miR_act_long$coefficient_log2
+  
+  # Verify sample names match in the same order
+  stopifnot(
+    "Transcription and activity samples must match in the same order" = 
+      all(dfi_samples == act_samples)
+  )
+  
+  # Save to PDF 
+  if (!is.null(save_pdf)) {
+    pdf(save_pdf, width = 3.5, height = 4.2)
+  }
+  
+  # Create plot
+  plot(dfi_vals, act_vals, pch = 16, cex = 0.5,
+       xlab = paste0(miRNA_fam, " host gene\ntranscription log2FC"), ylab = paste0(miRNA_fam, " activity"),
+       cex.axis = 0.8, cex.lab = 1.2)
+  abline(lm(act_vals ~ dfi_vals), col = 4, lwd = 2)
+  
+  # Add correlation and p-value
+  test_res <- cor.test(dfi_vals, act_vals)
+  r <- test_res$estimate
+  p <- test_res$p.value
+  n <- length(dfi_vals)
+  if (r > 0){
+    text(min(dfi_vals, na.rm = TRUE), max(act_vals, na.rm = TRUE), 
+       paste0("r = ", round(r, 3), "\np = ", formatC(p, format = "e", digits = 3), "\nn = ", n), 
+       adj = c(0, 1), cex = 0.9)
+  } else {
+    text(max(dfi_vals, na.rm = TRUE)-1.5, max(act_vals, na.rm = TRUE), 
+       paste0("r = ", round(r, 3), "\np = ", formatC(p, format = "e", digits = 3), "\nn = ", n), 
+       adj = c(0, 1), cex = 0.9)    
+  }
+  
+  
+  # Close PDF if it was opened
+  if (!is.null(save_pdf)) {
+    dev.off()
+  }
+  
+  invisible(NULL)
+}
 ```
 
+```{r}
+plot_mir_transc_vs_activity("LIHC", "miR-590-3p", miR_act,  dfi_long, save_pdf = here("TCGA", "output", "figures", "TCGA_miRNA_act_vs_transc_miR590_LIHC.pdf"))
+```
 
-Example scatter plot for miR-590 in LIHC
+# Example scatter plot for miR-217 in LIHC
 
 ```{r}
-miR <- "miR-590"
-gene <- "ENSG00000106682"
-cancer="LIHC"
-
-# Filter dfi table for the gene of interest
-dfi_gene <- lapply(dfi_data, function(x) unlist(x[gene, ]))
-dfi_gene <- unlist(dfi_gene)
-
-# Make a vector indicating the cancer type of each sample
-nb_samples_cancers <- unlist(lapply(dfi_data, function(x) ncol(x)))
-cancers_vector <- rep(cancers, nb_samples_cancers)
-
-# Merge into table containing all samples of all cancer types and indicating the cancer type
-dfi_complete <- as.data.frame(cbind(dfi_gene, cancers_vector))
-colnames(dfi_complete) <- c("GOI_dfi", "cancer")
-
-# Filter miRNA activity for the miRNA of interest
-miRNA <- as.vector(miR)
-miR_cancers <- as.data.frame(cbind(row.names(miR_act), miR_act[,miRNA], as.vector(miR_act$cancers_vector)))
-colnames(miR_cancers) <- c("samples", "miR_act", "cancer")
-
-# Make table with the samples, dfi for the host gene and miRNA activity in that cancer type, removing normal samples
-cancer_data <- dfi_complete[dfi_complete$cancer== cancer, ]
-row.names(cancer_data) <- gsub("-1$", "", row.names(cancer_data))
-cancer_data <- cancer_data[grep("\\-01$", row.names(cancer_data)), ]
-cancer_data$miRNA_act <- NA
-cancer_miR <- miR_cancers[miR_cancers$cancer == cancer, ]
-cancer_data$miRNA_act <- cancer_miR[match(row.names(cancer_data), cancer_miR$samples),]$miR_act
-
-# Correlation
-corr <- cor.test(as.numeric(as.vector(cancer_data$GOI_dfi)), as.numeric(as.vector(cancer_data$miRNA_act)))
-
-# Scatter plot
-plot(as.numeric(as.vector(cancer_data$GOI_dfi)), as.numeric(as.vector(cancer_data$miRNA_act)), pch = 16, cex=0.5, xlab="Host gene transcription log(FC)", ylab="miRNA activity")
-abline(lm(as.numeric(as.vector(cancer_data$miRNA_act)) ~ as.numeric(as.vector(cancer_data$GOI_dfi))), col = 4, lwd = 2)
-text(1, 0.08, paste("r = ", round(corr$estimate, 3), sep=""))
-
+plot_mir_transc_vs_activity("LIHC", "miR-217", miR_act,  dfi_long, save_pdf = here("TCGA", "output", "figures", "TCGA_miRNA_act_vs_transc_miR217_LIHC.pdf"))
 ```
 
 ```{r}
