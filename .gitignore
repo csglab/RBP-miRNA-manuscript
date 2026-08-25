@@ -19,3 +19,4 @@ TCGA/data/*BETAS_d*
 TCGA/output/supplementary_tables/*_stability_bias_corr*
 TCGA/output/supplementary_tables/TCGA_miRNA_activity.csv
 TCGA/output/rds/TCGA_dfi_long.rds
+TCGA/data/*_log2RSEM.csv

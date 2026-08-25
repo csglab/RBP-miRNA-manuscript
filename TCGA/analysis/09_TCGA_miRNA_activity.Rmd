@@ -229,11 +229,9 @@ glm_results <- glm_results |>
 ```{r}
 # Save all results in long-format tibble 
 write.csv(glm_results, file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"), row.names = FALSE)
-# glm_results <- read.csv(file = here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
 ```
 
 # Number of miRNAs with dysregulated activity in at least one tumor sample 
-
 ```{r}
 glm_results %>%
   filter(grepl("\\.01$", sample_name)) %>%   # Keep only primary tumor samples

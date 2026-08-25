@@ -260,13 +260,17 @@ mir_gene_pairs_sig <- mir_gene_pairs_sig %>%
   )
 dim(mir_gene_pairs_sig)
 
-# For the pairs that got no match (NA miR_family), try to remove the -1/2 at the end of the pri-mir to get a match
+# For the pairs that got no match (NA miR_family), try to remove the -1/2/... at the end of the pri-mir to get a match
 mir_gene_pairs_sig$pri_mir_id_2 <- mir_gene_pairs_sig$pri_mir_id
-mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-1$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
-mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-2$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
-mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-3$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
-mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-4$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
-mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)] <- gsub("-5$", "", mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)])
+
+idx <- is.na(mir_gene_pairs_sig$miR_family)
+
+mir_gene_pairs_sig$pri_mir_id_2[idx] <- gsub(
+  "(-[0-9]+[A-Za-z]*)-[0-9]+$",
+  "\\1",
+  mir_gene_pairs_sig$pri_mir_id_2[idx]
+)
+
 mir_gene_pairs_sig$miR_family[is.na(mir_gene_pairs_sig$miR_family)] <- fams$miR_family_2[match(mir_gene_pairs_sig$pri_mir_id_2[is.na(mir_gene_pairs_sig$miR_family)], fams$pri_mir_id)]
 mir_gene_pairs_sig[is.na(mir_gene_pairs_sig$miR_family), ]
 dim(mir_gene_pairs_sig)
@@ -353,6 +357,8 @@ medians <- aggregate(cor_results$r, list(cor_results$cancer), median)
 order_cancers <- as.vector(medians[,1][order(medians[,2], decreasing = T)])
 cor_results$cancer <- factor(cor_results$cancer, levels = order_cancers)
 cor_results <- cor_results %>% arrange(cancer)
+
+saveRDS(cor_results, here("TCGA", "output", "rds", "TCGA_miRhostGenes_transc_vs_activity.rds"))
 ```
 
 # Violin plots of correlation coefficients 

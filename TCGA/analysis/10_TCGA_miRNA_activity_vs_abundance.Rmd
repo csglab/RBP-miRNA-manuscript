@@ -333,6 +333,8 @@ order_cancers <- as.vector(medians[,1][order(medians[,2], decreasing = T)])
 miRs_table$cancer <- factor(miRs_table$cancer, levels = order_cancers)
 miRs_table <- miRs_table %>% arrange(cancer)
 
+saveRDS(miRs_table, here("TCGA", "output", "rds", "TCGA_miRhostGenes_abundance_vs_activity.rds"))
+
 # Draw the violin plot
 p <- ggplot(miRs_table, aes(x = cancer, y = correlation)) + 
   geom_violin(fill = "grey80", colour = "#3366FF") +
