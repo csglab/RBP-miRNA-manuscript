@@ -21,7 +21,6 @@ library(tidyverse)
 library(stringr)
 library(scater)
 library(SingleCellExperiment)
-library(rsvd)
 library(scales)
 library(data.table)
 # library(ppcor)
@@ -29,7 +28,6 @@ library(dplyr)
 library(tidyr)
 library(stringr)
 library(ggplot2)
-library(gplots)
 ```
 
 # Load the TCGA gene expression data (log2RSEM) obtained from Firebrowse
@@ -46,11 +44,10 @@ logRSEM_data <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.
 head(logRSEM_data[[1]][, 1:5])
 ```
 
-# Define the gene IDs and gene names of interest
+# Define the genes of interest for the t-SNE plots
 
 ```{r}
-gene_IDs <- c("ENSG00000111364", "ENSG00000011304", "ENSG00000156502")
-gene_names <- c("DDX55", "PTBP1", "SUPV3L1")
+gene_names_tSNE <- c("DDX55", "PTBP1", "SUPV3L1")
 ```
 
 # Filter gene expression tables for the genes of interest and for tumor samples, and normalize by subtracting the average of normal samples
@@ -63,7 +60,7 @@ log2FC_gois <- lapply(logRSEM_data, function(x) {
   }
   
   # Filter to genes of interest
-  x <- x[rownames(x) %in% gene_names, ]
+  x <- x[rownames(x) %in% gene_names_tSNE, ]
   
   # Subtract mean of normal samples from all samples
   normal_cols <- grepl("-11$", colnames(x))
@@ -85,13 +82,12 @@ head(log2FC_gois[[2]])
 logRSEM_files <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.names = TRUE)
 cancer_types <- str_extract(logRSEM_files, "[A-Z]+(?=_log2RSEM)")
 
-# Combine all data into a long-format data frame
-log2FC_all <- log2FC_gois |>
+# Combine data from all cancers into a long-format data frame
+log2FC_gois_all <- log2FC_gois |>
   imap_dfr(
     ~ if (is.data.frame(.x)) {
       tibble::rownames_to_column(.x, "sample") |>
-        mutate(cancer = cancer_types[.y], .before = 1) |>
-        rename_with(tolower, all_of(gene_names))
+        mutate(cancer = cancer_types[.y], .before = 1)
     }
   ) |>
   mutate(sample = str_replace_all(sample, "-", "."))
@@ -104,418 +100,262 @@ miR_act <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_a
 miR_act <- miR_act[miR_act$sample_type == "tumor", ]
 ```
 
-# Combine miRNA activity and RBP expression data 
+# Visualization of pan-cancer RBP expression using t-SNE plots
+
+The t-SNE embedding of pan-cancer miRNA activity was already computed and
+plotted for miR-17-5p, miR-29-3p, and miR-19-3p in
+`09_TCGA_miRNA_activity.Rmd`, which caches the resulting
+`SingleCellExperiment` to `TCGA/output/rds/sce_tSNE.rds`. Here we reuse that same embedding (`reducedDim(sce_tSNE, "TSNE")`) and colour it by RBP
+expression instead of recomputing the t-SNE.
 
 ```{r}
-<==
-common_samples <- intersect(signedLogPvals_fltr$X, row.names(log2FC_all))
-log2FC_all <- log2FC_all[common_samples, ]
-signedLogPvals_fltr <- signedLogPvals_fltr[signedLogPvals_fltr$X %in% common_samples, ]
-act_fltr <- act_fltr[act_fltr$X %in% common_samples, ]
-all(row.names(log2FC_all) == act_fltr$X)
+sce_tSNE <- readRDS(here("TCGA", "output", "rds", "sce_tSNE.rds"))
+sce_tSNE
 ```
 
-# Visualization of pan-cancer RBP expression using t-SNE plots 
-
-Function used to make the t-SNE plot. The scripts are derived from code shared by Ariel Madrigal Aguirre
+Merge selected RBP expression log2FC values into the t-SNE object
 
 ```{r}
-custom_theme_plot <- function(size_text=15,
-                              leg_pos="right",
-                              size_text_titles=NULL,
-                              classic=TRUE,
-                              line_size=0.85,
-                              line_size_color="black",
-                              axis_ticks_length=0.25,
-                              axis_ticks_color="black"
-                              ){
-    require(ggplot2)
-    if( is.null(size_text_titles) ){
-        size_text_titles<- size_text + 2
-    }
-    if( classic ){
-        gg.plots<- theme_classic()
-    }else{
-        gg.plots<- theme_bw()
-    }
-    gg.plots <- gg.plots +
-        theme(axis.text.x=element_text(size=size_text, angle=45, hjust=1, color=line_size_color),
-              axis.line=element_line(size=line_size, colour=line_size_color),
-              axis.ticks=element_line(colour=axis_ticks_color, size=line_size),
-              axis.ticks.length=unit(axis_ticks_length, "cm"),
-              axis.title.x=element_text(size=size_text_titles),
-              legend.position=leg_pos,
-              plot.title=element_text(hjust=0.5, size=size_text),
-              axis.text.y=element_text(size=size_text, color="black"),
-              axis.title.y=element_text(size=size_text_titles) )
+rbp_expr <- log2FC_gois_all |>
+  select(sample, all_of(gene_names_tSNE))
+
+coldata_tsne <- as.data.frame(colData(sce_tSNE)) |>
+  left_join(rbp_expr, by = "sample")
+
+colData(sce_tSNE)[gene_names_tSNE] <- coldata_tsne[gene_names_tSNE]
+```
+
+Theme function for t-SNE plots
+
+```{r}
+custom_theme_plot <- function(size_text = 15,
+                               leg_pos = "right",
+                               size_text_titles = NULL,
+                               classic = TRUE,
+                               line_size = 0.85,
+                               line_size_color = "black",
+                               axis_ticks_length = 0.25,
+                               axis_ticks_color = "black",
+                               size_legend_text = 12,
+                               size_legend_title = 14) {
+  require(ggplot2)
+  if (is.null(size_text_titles)) {
+    size_text_titles <- size_text + 2
+  }
+  gg.plots <- if (classic) theme_classic() else theme_bw()
+  gg.plots +
+    theme(
+      axis.text.x = element_text(size = size_text, angle = 45, hjust = 1, color = line_size_color),
+      axis.line = element_line(size = line_size, colour = line_size_color),
+      axis.ticks = element_line(colour = axis_ticks_color, size = line_size),
+      axis.ticks.length = unit(axis_ticks_length, "cm"),
+      axis.title.x = element_text(size = size_text_titles),
+      legend.position = leg_pos,
+      plot.title = element_text(hjust = 0.5, size = size_text),
+      axis.text.y = element_text(size = size_text, color = "black"),
+      axis.title.y = element_text(size = size_text_titles),
+      legend.text = element_text(size = size_legend_text),
+      legend.title = element_text(size = size_legend_title),
+      legend.key.size = unit(0.8, "cm")
+    )
 }
 ```
 
-Create the data object to make the t-SNE plots
+Helper function to create a t-SNE plot coloured by RBP expression
 
 ```{r}
-dt <- act_fltr[ , c(-1, -ncol(act_fltr))]
-dt <- data.matrix(t(dt))
-coldata <- as.data.frame(cbind(as.vector(act_fltr$X), act_fltr$miR.29abcd, act_fltr$miR.19ab, act_fltr$miR.17, log2FC_all))
-colnames(coldata) <- c("sample", "miR-29abcd", "miR-19ab", "miR-17", gene_names, "cancer")
-for(i in 2:(ncol(coldata)-1)){
-  coldata[,i] <- as.numeric(as.vector(coldata[,i]))
-}
-sce <- SingleCellExperiment(list(logcounts=dt), colData=coldata, checkDimnames=FALSE)
-sce
-```
-
-Add PCA
-
-```{r}
-set.seed(18374)
-sce_pca<- rpca(t(assay(sce, "logcounts")), k=100)
-reducedDim(sce, "pca")<- sce_pca$x
-```
-
-t-SNE
-```{r}
-sce_tSNE <- runTSNE(sce, dimred="pca", perplexity=50) # perplexity=5, n_dimred=10
-```
-
-Set limits
-
-```{r}
-mir_lims=0.05
-rbp_lims=1
-```
-
-Plot t-SNE showing the cancer type
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="cancer") +
-      custom_theme_plot() +  
-      geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show DDX55 expression
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="DDX55") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-rbp_lims, rbp_lims), oob=squish, name="RBP expression\nlog2FC(RSEM T vs avg N)") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show PTBP1 expression
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="PTBP1") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-rbp_lims, rbp_lims), oob=squish, name="RBP expression\nlog2FC(RSEM T vs avg N)") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show SUPV3L1 expression
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="SUPV3L1") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-rbp_lims, rbp_lims), oob=squish, name="RBP expression\nlog2FC(RSEM T vs avg N)") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show miR-17 activity
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="miR-17") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-mir_lims, mir_lims), oob=squish, name="miRNA activity") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show miR-29 activity
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="miR-29abcd") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-mir_lims, mir_lims), oob=squish, name="miRNA activity") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-```
-
-Show miR-19 activity
-
-```{r}
-plotReducedDim(sce_tSNE,
-               ncomponents = 2,
-               dimred="TSNE",
-               point_size=1.5,               
-               colour_by ="miR-19ab") +
-    custom_theme_plot() +
-    scale_colour_gradient2(low="blue", high="red", mid="white", midpoint = 0, limits=c(-mir_lims, mir_lims), oob=squish, name="miRNA activity") +
-    geom_point(shape = 1, size=1.5 ,colour = "grey", alpha=0.5)
-
-```
-
-# Systematic analysis of correlations between miRNA activity and RBP expression for all candidate RBP-miRNA interactions
-
-Using the RBP-miRNA interaction list from the intersection of candidates identified with the RBP KD experiments from ENCODE and validated usisng the tissue and cell line samples from ENCODE. Define RBPs and miRNAs of interest
-
-```{r}
-interactions <- read.csv("RBPKD_miRNAs_newSigInts_corrShRNA6nts7ntsSigPosFishers_intersectRBPKDtotalRNAseq.csv")[,-1]
-interactions$miRNA <- as.vector(interactions$miRNA)
-interactions$RBP <- as.vector(interactions$RBP)
-miRNAs <- as.vector(interactions$miRNA)
-```
-
-Reformat the miRNA activity table
-
-```{r}
-row.names(act) <- act$X
-act <- act[,-1]
-row.names(act) <- gsub("\\.", "-", row.names(act))
-colnames(act) <- gsub("\\.", "-", colnames(act))
-```
-
-Initiallize tables where the correlation coefficients and p-values will be stored
-
-```{r}
-coeffs <- matrix(NA, nrow=nrow(interactions), ncol = length(cancers))
-row.names(coeffs) <- paste(interactions$RBP, miRNAs, sep = "_")
-colnames(coeffs) <- cancers
-
-pvals <- coeffs
-```
-
-For each interaction pair, compute the correlations and record the results. See comments within the code for descriptions of the steps.
-
-```{r}
-for (i in 1:nrow(interactions))
-{
-  # Filter all gene expression tables for the RBP of interest
-  RBP <- as.vector(interactions$RBP[i])
-  
-  logRSEM_gene <- lapply(logRSEM_data, function(x) unlist(x[RBP, ]))
-  logRSEM_gene <- unlist(logRSEM_gene)
-  
-  if(sum(is.na(logRSEM_gene)) == length(logRSEM_gene) | length(logRSEM_gene) == 0)
-  {
-    next
-  }
-
-  # Make a vector indicating the cancer type of each sample
-  nb_samples_cancers <- unlist(lapply(logRSEM_data, function(x) ncol(x)))
-  cancers_vector <- rep(cancers, nb_samples_cancers)
-  
-  # Merge into table containing all samples of all cancer types and indicating the cancer type
-  logRSEM_complete <- as.data.frame(cbind(logRSEM_gene, cancers_vector))
-  colnames(logRSEM_complete) <- c("GOI_expr", "cancer")
-
-  # Filter miRNA activity table for the miRNA of interest
-  miRNA <- interactions$miRNA[i]
-  miR_cancers <- as.data.frame(cbind(row.names(act), act[,miRNA], as.vector(act$cancers_vector)))
-  colnames(miR_cancers) <- c("samples", "miR_act", "cancer")
-  
-  # In each cancer, compute the pearson correlation coefficient and p-value
-  for (cancer in cancers)
-  {
-    # Make a table with samples, GOI expression, and miRNA activity in that cancer type, removing normal samples 
-    cancer_data <- logRSEM_complete[logRSEM_complete$cancer== cancer, ]
-    row.names(cancer_data) <- gsub("-1$", "", row.names(cancer_data))
-    cancer_data <- cancer_data[grep("\\-01$", row.names(cancer_data)), ]
-    cancer_data$miRNA_act <- NA
-    cancer_miR <- miR_cancers[miR_cancers$cancer == cancer, ]
-    if (nrow(cancer_miR) == 0)
-    {
-      next
-    }
-    cancer_data$miRNA_act <- cancer_miR[match(row.names(cancer_data), cancer_miR$samples),]$miR_act
-    
-    cancer_data <- cancer_data[rowSums(is.na(cancer_data)) == 0, ]
-    
-    # Correlation
-    corr <- cor.test(as.numeric(as.vector(cancer_data$GOI_expr)), as.numeric(as.vector(cancer_data$miRNA_act)))
-    coeffs[i, cancer] <- corr$estimate
-    pvals[i, cancer] <- corr$p.value
-  }
-  
-  # Add + or - sign to the interaction name to indicate the type of interaction
-  if (interactions$sign[i] == "-")
-  {
-    row.names(coeffs)[i] <- paste("-", row.names(coeffs)[i], sep="  ")
-  } else {
-    row.names(coeffs)[i] <- paste("+", row.names(coeffs)[i], sep="  ")
-  }
-  row.names(pvals) <- row.names(coeffs)
+rbp_tsne_plot <- function(gene, sce_obj, limits = 1) {
+  plotReducedDim(sce_obj,
+                 ncomponents = 2,
+                 dimred = "TSNE",
+                 point_size = 2,
+                 colour_by = gene) +
+    custom_theme_plot(size_text = 27, size_text_titles = 30, size_legend_text = 21, size_legend_title = 24) +
+    scale_colour_gradient2(
+      low = "blue", high = "red", mid = "white",
+      midpoint = 0, limits = c(-limits, limits),
+      oob = scales::squish,
+      name = paste0(gene, " expression\nlog2FC(RSEM T vs avg N)")
+    ) +
+    theme(legend.key.size = unit(1.2, "cm"))
 }
 ```
 
-Remove NA rows and columns
+Plot t-SNE for each RBP, coloured by expression log2FC(tumor vs average normal)
+
+```{r, fig.dim = c(12,10), fig.align = 'center'}
+rbp_lims <- 1
+
+rbp_pdf_names <- setNames(
+  paste0("TCGA_", gene_names_tSNE, "_expr_tSNE.pdf"),
+  gene_names_tSNE
+)
+
+for (gene in gene_names_tSNE) {
+  print(rbp_tsne_plot(gene, sce_tSNE, limits = rbp_lims))
+
+  pdf_file <- here("TCGA", "output", "figures", rbp_pdf_names[[gene]])
+  pdf(pdf_file, height = 10, width = 12.5)
+  print(rbp_tsne_plot(gene, sce_tSNE, limits = rbp_lims))
+  dev.off()
+
+  cat("Saved:", rbp_pdf_names[[gene]], "\n")
+}
+```
+
+# Correlations between miRNA activity and RBP expression for all candidate RBP-miRNA interactions
+
+Using the RBP-miRNA interaction list from the intersection of candidates identified with the RBP KD experiments from ENCODE and validated using the tissue and cell line samples from ENCODE. 
 
 ```{r}
-rows_keep <- which(rowSums(is.na(coeffs)) != ncol(coeffs))
-cols_keep <- which(colSums(is.na(coeffs)) != nrow(coeffs))
-coeffs <- coeffs[rows_keep, cols_keep]
-pvals <- pvals[rows_keep, cols_keep]
-```
+# Load interactions
+interactions <- readRDS(here("ENCODE_tissues_cell_lines", "output", "rds", "ENCODE_tissues_cell_lines_high_conf_ints.rds"))
 
-FDR correction
+# Add cancer names to expression data list
+names(logRSEM_data) <- cancer_types
+
+# Reformat sample names in expression data
+logRSEM_data <- lapply(logRSEM_data, function(x) {
+  colnames(x) <- str_replace_all(colnames(x), "-", ".")
+  x
+})
+```
 
 ```{r}
-pvalues_vector <- c(pvals)
-pvalues_vector_FDR <- p.adjust(pvalues_vector, method="fdr")
-FDR <- matrix(pvalues_vector_FDR, nrow = nrow(pvals), ncol = ncol(pvals))
-row.names(FDR) <- row.names(pvals)
-colnames(FDR) <- colnames(pvals)
-```
+# Helper function to compute the correlation between the expression of a given RBP and the activity of a given miRNA, within a given cancer type
+compute_correlation_cancer <- function(rbp, mirna, cancer) {
+  expr_mat <- logRSEM_data[[cancer]]
 
-Compute -log10 p-values 
+  # Skip if the RBP is not present in this cancer's expression data
+  if (!(rbp %in% rownames(expr_mat))) {
+    return(NULL)
+  }
+
+  rbp_expr <- as.numeric(expr_mat[rbp, ])
+  names(rbp_expr) <- colnames(expr_mat)
+
+  mirna_data <- miR_act |>
+    filter(cancer_type == cancer, miRNA == mirna)
+
+  if (nrow(mirna_data) == 0) {
+    return(NULL)
+  }
+
+  # Match samples between expression and miRNA activity data
+  common_samples <- intersect(names(rbp_expr), mirna_data$sample_name)
+  if (length(common_samples) == 0) {
+    return(NULL)
+  }
+
+  rbp_matched <- rbp_expr[common_samples]
+  mirna_matched <- mirna_data$coefficient_log2[match(common_samples, mirna_data$sample_name)]
+
+  corr <- cor.test(rbp_matched, mirna_matched)
+  tibble(r = corr$estimate, pval = corr$p.value)
+}
+```
 
 ```{r}
-signedlog10pvals <- abs(log10(pvals)) 
+# Compute the correlations for every RBP-miRNA interaction, in every cancer type
+corr_table <- interactions |>
+  select(RBP, miRNA, sign) |>
+  # Cross every interaction with every cancer type
+  tidyr::crossing(cancer = cancer_types) |>
+  mutate(
+    interaction = paste(RBP, miRNA, sep = " - "),
+    corr_data = pmap(list(RBP, miRNA, cancer), compute_correlation_cancer)
+  ) |>
+  unnest(corr_data, keep_empty = TRUE) |>
+  filter(!is.na(r)) |>
+  mutate(
+    padj = p.adjust(pval, method = "fdr"),
+    signedlog10pvals = abs(log10(pval))
+  ) |>
+  select(interaction, RBP, miRNA, sign, cancer, r, pval, padj, signedlog10pvals) |>
+  as.data.frame()
+
+head(corr_table)
+nrow(corr_table)
 ```
 
-Get data after clustering
-
-```{r, results=F}
-htmp <- heatmap.2(coeffs, hclust=function(x) hclust(x,method="complete"), distfun = function(x) dist(x,method = 'euclidean'))
-coeffs_clust <- coeffs[rev(htmp$rowInd), htmp$colInd]
-signedlog10pvals_clust <- signedlog10pvals[row.names(coeffs_clust), colnames(coeffs_clust)]
-FDR_clust <- FDR[row.names(coeffs_clust), colnames(coeffs_clust)]
-```
-
-Make data tables to make the heatmap
+Cluster RBP-miRNA interactions and cancer types by their correlation coefficients
 
 ```{r}
-signedLogPval_srt <- data.table(cbind(row.names(signedlog10pvals_clust), signedlog10pvals_clust))
-colnames(signedLogPval_srt)[1] <- "Interactions"
-signedLogPval_melt <- melt(signedLogPval_srt, id.vars = "Interactions")
-names(signedLogPval_melt)[2:3] <- c("Cancers", "signedLog10pval")
+r_mat <- corr_table |>
+  select(interaction, cancer, r) |>
+  pivot_wider(names_from = cancer, values_from = r) |>
+  column_to_rownames("interaction") |>
+  as.matrix()
 
-coeffs_srt <- data.table(cbind(row.names(coeffs_clust), coeffs_clust))
-colnames(coeffs_srt)[1] <- "Interactions"
-coeffs_melt <- melt(coeffs_srt, id.vars = "Interactions")
-names(coeffs_melt)[2:3] <- c("Cancers", "coeffs")
+row_clust <- hclust(dist(r_mat, method = "euclidean"), method = "complete")
+col_clust <- hclust(dist(t(r_mat), method = "euclidean"), method = "complete")
 
-FDR_srt <- data.table(cbind(row.names(FDR_clust), FDR_clust))
-colnames(FDR_srt)[1] <- "Interactions"
-FDR_melt <- melt(FDR_srt, id.vars = "Interactions")
-names(FDR_melt)[2:3] <- c("Cancers", "FDR")
+interaction_levels <- rownames(r_mat)[row_clust$order]
+cancer_levels <- colnames(r_mat)[col_clust$order]
 ```
 
-Combine into a single table
-
-```{r}
-dat_htmp <- cbind(signedLogPval_melt, coeffs_melt$coeffs, FDR_melt$FDR)
-colnames(dat_htmp)[3:5] <- c("-log10(p-value)", "coeffs", "padj")
-dat_htmp[, "-log10(p-value)"] <- as.numeric(as.vector(unlist(dat_htmp[, "-log10(p-value)"])))
-dat_htmp$coeffs <- as.numeric(as.vector(dat_htmp$coeffs))
-dat_htmp$padj <- as.numeric(as.vector(dat_htmp$padj))
-
-dat_htmp$FDR <- ifelse(dat_htmp$padj<0.05, 1, 0)
-```
-
-Set -log10(p-value) and coefficients limits and squish saturated values
+Make the data table for the heatmap, clustered and converting saturated values
 
 ```{r}
 pval_lim <- 5
-dat_htmp$`-log10(p-value)`[abs(dat_htmp$`-log10(p-value)`) > pval_lim] <- pval_lim
 coeff_lim <- 0.3
-dat_htmp$coeffs[abs(dat_htmp$coeffs) > coeff_lim] <- coeff_lim*sign(dat_htmp$coeffs[abs(dat_htmp$coeffs) > coeff_lim])
+
+dat_htmp <- corr_table |>
+  transmute(
+    Interactions = factor(interaction, levels = interaction_levels),
+    Cancers = factor(cancer, levels = cancer_levels),
+    `-log10(p-value)` = pmin(signedlog10pvals, pval_lim),
+    `Pearson r` = pmax(pmin(r, coeff_lim), -coeff_lim),
+    FDR = as.integer(padj < 0.05)
+  )
 ```
 
-Assign colors corresponding to interaction types
+Assign interaction labels colors according to each interaction's expected sign
 
 ```{r}
-colors_sign <- rev(row.names(coeffs_clust))
-colors_sign <- gsub(" .*", "", colors_sign)
-colors_sign[grep("-", colors_sign)] <- "blue"
-colors_sign[grep("\\+", colors_sign)] <- "red"
+sign_by_interaction <- corr_table |>
+  distinct(interaction, sign) |>
+  deframe()
+
+colors_sign <- ifelse(sign_by_interaction[interaction_levels] == "-", "blue", "red")
 ```
 
-Improve label and miRNA names format
+Draw the dotplot
 
-```{r}
-colnames(dat_htmp)[4] <- "Pearson correlation"
-dat_htmp$Interactions <- gsub(".* ", "", dat_htmp$Interactions)
-signedLogPval_srt$Interactions <- gsub(".* ", "", signedLogPval_srt$Interactions)
-row.names(coeffs_clust) <- gsub(".* ", "", row.names(coeffs_clust) )
+```{r, fig.dim = c(10.2, 7), fig.align = 'center'}
+dotplot <- ggplot(dat_htmp, aes(x = Cancers, y = Interactions)) +
+  geom_point(aes(size = `-log10(p-value)`, fill = `Pearson r`, color = FDR),
+             shape = 21, stroke = 1) +
+  scale_fill_gradient2(limits = c(-coeff_lim, coeff_lim), low = "blue", mid = "white", high = "red") +
+  scale_colour_gradient(limits = c(0, 1), low = "white", high = "black") +
+  scale_size("-log10(p-value)", range = c(0.1, 10), breaks = seq(0, pval_lim, 1), limits = c(0, pval_lim)) +
+  guides(size = guide_legend(override.aes = list(fill = "black"))) +
+  labs(x = "", y = "") +
+  theme(
+    axis.text.y = element_text(color = colors_sign, size = 17),
+    legend.key.size = unit(1.5, "lines"),
+    text = element_text(size = 16),
+    axis.text = element_text(size = 17),
+    axis.text.x = element_text(angle = 90, size = 17, vjust = 0.5, hjust = 1),
+    axis.title = element_text(size = 18),
+    legend.title = element_text(size = 17),
+    legend.text = element_text(size = 15),
+    panel.background = element_rect(fill = "white", colour = "white"),
+    plot.margin = unit(c(1, 1, 1, 1), "cm")
+  )
 
-lbls <- row.names(coeffs_clust)
-lbls <- gsub("miR-33ab$"," - miR-33-5p", lbls)
-lbls <- gsub("miR-26ab$"," - miR-26-5p", lbls)
-lbls <- gsub("miR-29abcd$"," - miR-29-3p", lbls)
-lbls <- gsub("miR-27abc$"," - miR-27-3p", lbls)
-lbls <- gsub("miR-133abc$"," - miR-133-3p", lbls)
-lbls <- gsub("miR-199ab-5p$"," - miR-199-5p", lbls)
-lbls <- gsub("miR-376abd$"," - miR-376-3p", lbls)
-lbls <- gsub("miR-23abc$"," - miR-23-3p", lbls)
-lbls <- gsub("miR-19ab$"," - miR-19-3p", lbls)
-lbls <- gsub("miR-182$"," - miR-182-5p", lbls)
-lbls <- gsub("miR-758$"," - miR-758-3p", lbls)
-lbls <- gsub("miR-22$"," - miR-22-3p", lbls)
-lbls <- gsub("miR-150$"," - miR-150-5p", lbls)
-lbls <- gsub("miR-124$"," - miR-124-3p", lbls)
-lbls <- gsub("miR-96$"," - miR-96-5p", lbls)
-lbls <- gsub("miR-370$"," - miR-370-3p", lbls)
-lbls <- gsub("miR-17$"," - miR-17-5p", lbls)
-lbls <- gsub("miR-218$"," - miR-218-5p", lbls)
-lbls <- gsub("miR-21$"," - miR-21-5p", lbls)
-lbls <- gsub("miR-25$"," - miR-25-3p", lbls)
-lbls <- gsub("_ -"," -", lbls)
-lbls <- gsub("_"," - ", lbls)
-```
+dotplot
 
-Draw the heatmap
-
-```{r, eval = F}
-pdf(paste("heatmap_TCGA_intsConfENCODEtotalRNAseq_corrRBPexprMirAct_signedLog10PvaluesANDcoeffs.pdf", sep=""), width=10.2, height=7)
-ggplot(dat_htmp) +
-geom_point(aes(
-  x = Cancers, 
-  size = `-log10(p-value)`, 
-  y = factor(Interactions, levels = rev(as.character(signedLogPval_srt$Interactions))),
-  shape = 21, 
-  stroke = 1,
-  fill=`Pearson correlation`, 
-  color=FDR)) +
-scale_shape_identity() +
-scale_y_discrete(label = rev(lbls)) +
-theme(axis.text.y = element_text(color=colors_sign)) +
-scale_fill_gradient2(limits=c(-coeff_lim,coeff_lim), low="blue", mid="white", high="red") + 
-scale_colour_gradient( limits=c(0,1), low="white", high="black") + 
-scale_size("-log10(p-value)", range = c(0.1, 10), breaks = seq(0, pval_lim, 1), limits=c(0, pval_lim))+
-guides(size = guide_legend(override.aes = list(fill = "red")))+
-labs(x="",y="") +
-theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=12), axis.text = element_text(size=12), axis.text.x = element_text(angle=90, size=12, vjust=0.5, hjust=1), panel.background = element_rect(fill = 'white', colour = 'white')) +
-theme(plot.margin = unit(c(1,1,1,1), "cm")) 
+pdf(here("TCGA", "output", "figures", "TCGA_high_conf_ints_corrRBPexprMirAct_dotplot.pdf"), width = 11, height = 8)
+print(dotplot)
 dev.off()
 ```
 
-![Heatmap of associations between RBP expression and miRNA activity per cancer type](heatmap_TCGA_intsConfENCODEtotalRNAseq_corrRBPexprMirAct_signedLog10PvaluesANDcoeffs.pdf){width=70%}
-
-Make a list of interactions for which the direction of correlation is in agreement with the predicted type of interaction (activating / inhibitory) in at least 70% of TCGA cancers
+# Make a list of interactions for which the direction of correlation is in agreement with the predicted type of interaction (activating / inhibitory) in at least 70% of TCGA cancers
 
 ```{r,}
+<== based on corr_table
+
 toKeep <- rep(NA, nrow(coeffs))
 for (i in 1:nrow(coeffs))
 {
