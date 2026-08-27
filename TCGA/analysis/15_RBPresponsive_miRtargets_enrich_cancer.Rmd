@@ -328,13 +328,6 @@ activity_tasks <- interactions |>
 gsea_activity_res <- activity_tasks |>
   group_by(cancer_type, sample) |>
   group_modify(function(df, keys) {
-
-    for (interaction in df$interaction) {
-      message(
-        "Cancer: ", keys$cancer_type
-      )
-    }
-
     stab_vec <- tcga_stab[[keys$cancer_type]][, keys$sample]
 
     res <- run_target_gsea_batch(
@@ -350,6 +343,7 @@ gsea_activity_res <- activity_tasks |>
   ungroup()
 
 nrow(gsea_activity_res)
+saveRDS(gsea_activity_res, here("TCGA", "output", "rds", "TCGAstab_vs_KDstab_miRtar_GSEA_byMirActivity_candidateInts.rds"))
 ```
 
 ## Summarize the results as proportions of tested tumors in each category, for each interaction
@@ -366,7 +360,7 @@ p_activity <- stacked_plot(summary_activity)
 p_activity
 
 ggsave(
-  here("TCGA", "output", "figures", "TCGA_stab_vs_KDstab_miRtar_GSEA_candidateInts_byMirActivity.pdf"),
+  here("TCGA", "output", "figures", "TCGAstab_vs_KDstab_miRtar_GSEA_candidateInts_byMirActivity.pdf"),
   p_activity, width = 7, height = 10
 )
 ```
@@ -517,6 +511,7 @@ gsea_expression_res <- expression_tasks |>
   ungroup()
 
 nrow(gsea_expression_res)
+saveRDS(gsea_expression_res, here("TCGA", "output", "rds", "TCGAstab_vs_KDstab_miRtar_GSEA_byRBPexr_candidateInts.rds"))
 ```
 
 ## Summarize the results as proportions of tested tumors in each category, for each interaction
@@ -533,7 +528,7 @@ p_expression <- stacked_plot(summary_expression)
 p_expression
 
 ggsave(
-  here("TCGA", "output", "figures", "TCGA_stab_vs_KDstab_miRtar_GSEA_candidateInts_byRBPExpression.pdf"),
+  here("TCGA", "output", "figures", "TCGAstab_vs_KDstab_miRtar_GSEA_candidateInts_byRBPExpression.pdf"),
   p_expression, width = 7.5, height = 10
 )
 ```
