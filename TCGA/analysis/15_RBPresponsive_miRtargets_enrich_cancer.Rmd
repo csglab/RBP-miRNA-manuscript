@@ -1,0 +1,543 @@
+---
+title: 'Behavior of RBP-responsive miRNA targets in cancer'
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+Determine if the same predicted miRNA targets that were responsive to in vitro RBP inhibition are also dysregulated in TCGA tumors. We are looking at the enrichment of RBP KD-responsive miRNA targets among stabilized/destabilized genes in cancer.
+
+# Load libraries
+
+```{r}
+library(fgsea)
+library(tidyverse)
+library(data.table)
+library(matrixStats)
+library(glue)
+```
+
+# Load the miRNA activity data and filter for tumors
+
+```{r}
+miR_act <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
+miR_act <- miR_act[miR_act$sample_type == "tumor", ]
+```
+
+# Load mRNA stability data for RBP KD experiments from ENCODE 
+
+```{r}
+stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_HepG2.csv"), row.names=1)
+stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_K562.csv"), row.names=1)
+```
+
+# Load mRNA stability data for TCGA samples
+
+One matrix (genes x samples) per cancer type, reused throughout this notebook for both the miRNA-activity-based and the RBP-expression-based enrichment analyses below, so the files are only read once.
+
+```{r}
+tcga_stab_files <- Sys.glob(here("TCGA", "output", "supplementary_tables", "TCGA-*_stability_bias_corr.csv"))
+tcga_cancer_types <- tcga_stab_files |>
+  basename() |>
+  str_extract("(?<=TCGA-)[A-Z]+(?=_stability_bias_corr)")
+
+tcga_stab <- tcga_stab_files |>
+  set_names(tcga_cancer_types) |>
+  map(function(file) {
+    dat <- as.data.frame(fread(file))
+    rownames(dat) <- dat[[1]]
+    as.matrix(dat[, -1])
+  })
+
+names(tcga_stab)
+```
+
+# Load predicted miRNA binding matrix
+
+```{r}
+miR_int <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header=TRUE, row.names=1)
+
+colnames(miR_int) <- gsub("\\.", "-", colnames(miR_int))
+
+# Define mapping from original names to canonical names
+mirna_name_mapping <- tibble(
+  original = c(
+    "let-7", "miR-101", "miR-10abc", "miR-122", "miR-124", "miR-127", "miR-133abc",
+    "miR-135ab", "miR-136", "miR-138", "miR-141", "miR-143", "miR-145", "miR-146ac",
+    "miR-150", "miR-153", "miR-155", "miR-15abc", "miR-17", "miR-182", "miR-184",
+    "miR-185", "miR-187", "miR-18ab", "miR-191", "miR-193", "miR-194", "miR-196abc",
+    "miR-199ab-5p", "miR-19ab", "miR-1ab", "miR-200bc", "miR-203", "miR-204",
+    "miR-21", "miR-210", "miR-214", "miR-216a", "miR-216b", "miR-217", "miR-218",
+    "miR-22", "miR-221", "miR-23abc", "miR-24", "miR-25", "miR-26ab", "miR-27abc",
+    "miR-299", "miR-29abcd", "miR-300", "miR-30abcdef", "miR-31", "miR-326",
+    "miR-328a", "miR-329", "miR-338", "miR-33ab", "miR-34ac", "miR-370", "miR-375",
+    "miR-376abd", "miR-376c", "miR-377", "miR-383", "miR-433", "miR-448",
+    "miR-450a", "miR-487b", "miR-495", "miR-496", "miR-504", "miR-505", "miR-539",
+    "miR-543", "miR-544", "miR-551a", "miR-7", "miR-758", "miR-874", "miR-9",
+    "miR-93", "miR-96", "miR-99ab", "miR.181abcd"
+  ),
+  canonical = c(
+    "let-7-5p", "miR-101-3p", "miR-10-5p", "miR-122-5p", "miR-124-3p", "miR-127-3p",
+    "miR-133-3p", "miR-135-5p", "miR-136-5p", "miR-138-5p", "miR-141-3p", "miR-143-3p",
+    "miR-145-5p", "miR-146-5p", "miR-150-5p", "miR-153-3p", "miR-155-5p", "miR-15-5p",
+    "miR-17-5p", "miR-182-5p", "miR-184", "miR-185-5p", "miR-187-3p", "miR-18-5p",
+    "miR-191-5p", "miR-193-3p", "miR-194-5p", "miR-196-5p", "miR-199-5p", "miR-19-3p",
+    "miR-1-3p", "miR-200bc-3p", "miR-203a-3p", "miR-204-5p", "miR-21-5p", "miR-210-3p",
+    "miR-214-3p", "miR-216a-5p", "miR-216b-5p", "miR-217", "miR-218-5p", "miR-22-3p",
+    "miR-221-3p", "miR-23-3p", "miR-24-3p", "miR-25-3p", "miR-26-5p", "miR-27-3p",
+    "miR-299-3p", "miR-29-3p", "miR-381-3p", "miR-30-5p", "miR-31-5p", "miR-326",
+    "miR-328-3p", "miR-329-3p", "miR-338-3p", "miR-33-5p", "miR-34-5p", "miR-370-3p",
+    "miR-375", "miR-376-3p", "miR-376c-3p", "miR-377-3p", "miR-383-5p", "miR-433-3p",
+    "miR-448", "miR-450-5p", "miR-487-3p", "miR-495-3p", "miR-496", "miR-4725-5p",
+    "miR-505-3p", "miR-539-5p", "miR-543", "miR-544a-3p", "miR-551-3p", "miR-7-5p",
+    "miR-758-3p", "miR-874-3p", "miR-9-5p", "miR-302-3p", "miR-96-5p", "miR-99-5p",
+    "miR-181-5p"
+  )
+)
+
+# Replace names according to the mapping; keep unmatched names unchanged
+colnames(miR_int) <- ifelse(
+  colnames(miR_int) %in% mirna_name_mapping$original,
+  mirna_name_mapping$canonical[
+    match(colnames(miR_int), mirna_name_mapping$original)
+  ],
+  colnames(miR_int)
+)
+```
+
+# Load the list candidate RBP-miRNA interactions (output from RBP_expression_vs_miRNA_activity.Rmd)
+
+```{r}
+interactions <- read.csv(here("TCGA", "output", "supplementary_tables", "interactions_RBPKD_ENCODEcellsTissues_TCGA_purityCorrected.csv"))[, -1]
+```
+
+# Assign the ENCODE KD cell line used to identify each candidate interaction
+
+```{r}
+interactions <- interactions |>
+  left_join(
+    readRDS(here("ENCODE_tissues_cell_lines", "output", "rds", "ENCODE_tissues_cell_lines_high_conf_ints.rds")) |>
+      distinct(RBP, miRNA, cell_line),
+    by = c("RBP", "miRNA")
+  )
+stopifnot(!anyNA(interactions$cell_line))
+interactions
+```
+
+# Helper functions for testing enrichment of RBP-KD-responsive miRNA targets among stabilized/destabilized mRNAs in tumors
+
+For each RBP-miRNA interaction, we determine (1) the predicted miRNA targets that respond to RBP knockdown in the direction consistent with the interaction (stabilized upon KD for a "+" interaction, destabilized for a "-" interaction), and (2) their median differential stability upon RBP KD. We then test, for a given sample's mRNA stability changes (tumor vs. normal), whether these RBP-KD-consistent targets are enriched among the sample's stabilized or destabilized genes using GSEA, orienting the resulting enrichment score so that a positive value always means "as expected". `prepare_interaction()` results are cached (`get_prep()`) since the same interaction is often requested more than once, and `fgsea()` is called once per (cancer type, sample) across all interactions tested on that sample rather than once per interaction, which is by far the more expensive pattern given how many tumor samples there are.
+
+```{r}
+ln_to_log2 <- function(x) {
+  x / log(2)
+}
+
+# Predicted miRNA targets responding to RBP KD in the direction consistent with the interaction sign, and their median differential stability upon RBP KD (log2FC)
+prepare_interaction <- function(rbp, mirna, int_sign, cell_line) {
+
+  stopifnot(int_sign %in% c("+", "-"))
+  stopifnot(cell_line %in% c("HepG2", "K562"))
+  stopifnot(mirna %in% colnames(miR_int))
+
+  stab_kd <- if (cell_line == "HepG2") stab_HepG2 else stab_K562
+
+  kd_cols <- grep(paste0("_", rbp, "_"), colnames(stab_kd))
+  stopifnot(length(kd_cols) > 0)
+
+  med_stab_kd <- ln_to_log2(
+    data.matrix(stab_kd[, kd_cols, drop = FALSE])
+  ) |>
+    rowMedians() |>
+    setNames(rownames(stab_kd))
+
+  med_stab_kd <- med_stab_kd[!is.na(med_stab_kd)]
+
+  targets <- rownames(miR_int)[miR_int[, mirna] > 0]
+
+  kd_consistent_targets <- if (int_sign == "+") {
+    intersect(names(med_stab_kd)[med_stab_kd > 0], targets)
+  } else {
+    intersect(names(med_stab_kd)[med_stab_kd < 0], targets)
+  }
+
+  list(
+    med_stab_kd = med_stab_kd,
+    targets = targets,
+    kd_consistent_targets = kd_consistent_targets
+  )
+}
+
+# prepare_interaction() is requested more than once for the same (rbp, mirna, int_sign, cell_line) combination (once for the miRNA-activity-based GSEA below, once for the RBP-expression-based GSEA, and again for the example density plots), so cache results and only compute each interaction once.
+prep_cache <- new.env()
+get_prep <- function(rbp, mirna, int_sign, cell_line) {
+  key <- paste(rbp, mirna, int_sign, cell_line, sep = "|")
+  if (is.null(prep_cache[[key]])) {
+    prep_cache[[key]] <- prepare_interaction(rbp, mirna, int_sign, cell_line)
+  }
+  prep_cache[[key]]
+}
+
+# Test enrichment of several RBP-KD-consistent miRNA target sets (one per interaction) among a single sample's mRNA stability changes (tumor vs. normal) in one fgsea() call. `gene_sets` and `flip` are named by interaction (matching names required). Orient ES so that positive values always mean enrichment in the biologically expected direction.
+run_target_gsea_batch <- function(stab_vec, gene_sets, flip, min_size = 10) {
+
+  stab_vec <- stab_vec[!is.na(stab_vec)]
+  stab_vec <- sort(log2(exp(stab_vec)), decreasing = TRUE)
+
+  gene_sets <- map(gene_sets, intersect, names(stab_vec))
+  # Skip gene sets with fewer than min_size targets available in the ranked gene list
+  gene_sets <- gene_sets[lengths(gene_sets) >= min_size]
+
+  if (length(gene_sets) == 0) {
+    return(tibble(name = character(), ES = numeric(), pval = numeric()))
+  }
+
+  res <- fgsea(pathways = gene_sets, stats = stab_vec, minSize = min_size)
+
+  tibble(
+    name = res$pathway,
+    ES = ifelse(flip[res$pathway], -res$ES, res$ES),
+    pval = res$pval
+  )
+}
+
+# For each interaction, summarize the proportion of tested tumors falling into each of four categories: enrichment as/not as expected, and significant/not significant (FDR < 0.05). FDR correction is applied once, across all samples and interactions together.
+summarize_enrichment <- function(gsea_df) {
+
+  gsea_df <- gsea_df |>
+    filter(!is.na(ES), !is.na(pval)) |>
+    mutate(
+      padj = p.adjust(pval, method = "fdr")
+    )
+
+  gsea_df |>
+    group_by(interaction) |>
+    summarise(
+      n = n(),
+      not_expected_sig =
+        mean(ES < 0 & padj < 0.05),
+      not_expected_ns =
+        mean(ES < 0 & padj >= 0.05),
+      expected_sig =
+        mean(ES > 0 & padj < 0.05),
+      expected_ns =
+        mean(ES > 0 & padj >= 0.05),
+      .groups = "drop"
+    )
+}
+
+# Diverging stacked bar plot of the summary table produced by summarize_enrichment().
+stacked_plot <- function(summary_df) {
+  category_levels <- c(
+    "Not as expected, significant", "Not as expected, not significant",
+    "As expected, not significant", "As expected, significant"
+  )
+  category_colors <- setNames(c("#CD3278", "#FFAEB9", "#B9D3EE", "#6495ED"), category_levels)
+
+  plot_df <- summary_df |>
+    transmute(
+      interaction,
+      `Not as expected, significant` = -not_expected_sig,
+      `Not as expected, not significant` = -not_expected_ns,
+      `As expected, not significant` = expected_ns,
+      `As expected, significant` = expected_sig
+    ) |>
+    pivot_longer(-interaction, names_to = "category", values_to = "proportion") |>
+    mutate(category = factor(category, levels = category_levels))
+
+  ggplot(plot_df, aes(x = proportion, y = interaction, fill = category)) +
+    geom_col(width = 0.7, colour = "grey30", linewidth = 0.2) +
+    geom_vline(xintercept = 0, colour = "black") +
+    scale_fill_manual(values = category_colors) +
+    scale_x_continuous(labels = scales::percent, limits = c(-1, 1)) +
+    labs(x = "Proportion of tumors", y = NULL, fill = NULL) +
+    theme_classic() +
+    theme(legend.position = "right")
+}
+```
+
+# Helper functions for the 2D density plots comparing predicted miRNA target stability in a tumor sample to their stability upon RBP KD 
+
+```{r}
+# Table of mRNA stability changes in a tumor sample vs. RBP KD, flagging predicted miRNA targets
+target_stability_table <- function(stab_vec, med_stab_kd, targets) {
+  stab_vec <- ln_to_log2(stab_vec[!is.na(stab_vec)])
+  common_genes <- intersect(names(stab_vec), names(med_stab_kd))
+  tibble(
+    gene = common_genes,
+    stab_tumor = stab_vec[common_genes],
+    stab_kd = med_stab_kd[common_genes],
+    is_target = common_genes %in% targets
+  )
+}
+
+# Density difference plot (miRNA targets vs. non-targets)
+plot_target_density <- function(dat, title, ylab, lims = c(-4, 4, -1, 1), zlim = c(-0.3, 0.3)) {
+  targets <- dat |> filter(is_target)
+  non_targets <- dat |> filter(!is_target)
+  
+  f1 <- MASS::kde2d(targets$stab_tumor, targets$stab_kd, lims = lims, n = 500, h = 0.3)
+  f2 <- MASS::kde2d(non_targets$stab_tumor, non_targets$stab_kd, lims = lims, n = 500, h = 0.3)
+  zvalues <- pmax(pmin(f1$z - f2$z, zlim[2]), zlim[1])
+
+  image(f2$x, f2$y, zvalues,
+        zlim = zlim, col = colorRampPalette(c("blue", "white", "red"))(100),
+        xlab = "Stability tumor vs normal (log2FC)", ylab = ylab)
+  abline(v = 0, h = 0, col = "black", lty = 2)
+  title(main = title, font.main = 1)
+}
+```
+
+# For each interaction, for each TCGA tumor where the differential miRNA activity is significant, use GSEA to determine the enrichment of miRNA targets among stabilized or destabilized mRNAs, and check the agreement with the expectations, **based on miRNA activity**
+
+The direction of interest here is the sign of the miRNA's differential activity coefficient in the tumor (`direction = 1` if activity increases, i.e. the miRNA destabilizes its targets more; `-1` if it decreases). Because the interaction sign was already used above to select the RBP-KD-consistent target set, the expected position of these targets in the tumor's stability ranking flips only with this direction, regardless of whether the interaction is activating ("+") or inhibitory ("-").
+
+Several interactions share the same miRNA (e.g. `miR-29-3p` and `miR-17-5p` each appear in four interactions), in which case they are tested against exactly the same set of significant tumor samples. Rather than looping over interactions and, for each one, calling `fgsea()` separately for every sample, we first build a table of every (interaction, sample) pair to test, then group by sample and run a single `fgsea()` call per sample across all interactions that use it.
+
+```{r}
+# Precompute the FDR < 0.05 tumor samples for each miRNA once, instead of refiltering miR_act for every interaction that happens to involve that miRNA.
+miR_act_sig <- miR_act |>
+  filter(FDR < 0.05) |>
+  transmute(miRNA, sample = sample_name, cancer_type, direction = sign(coefficient))
+miR_act_by_mirna <- split(dplyr::select(miR_act_sig, -miRNA), miR_act_sig$miRNA)
+empty_activity_samples <- tibble(sample = character(), cancer_type = character(), direction = numeric())
+
+# One row per (interaction, sample) to test: the RBP-KD-consistent target set for the interaction (cached, computed once per interaction), and whether the ES needs flipping
+activity_tasks <- interactions |>
+  dplyr::select(interaction, RBP, miRNA, sign, cell_line) |>
+  mutate(
+    kd_consistent_targets = pmap(
+      list(RBP, miRNA, sign, cell_line),
+      ~ get_prep(..1, ..2, ..3, ..4)$kd_consistent_targets
+    ),
+    samples = map(miRNA, ~ miR_act_by_mirna[[.x]] %||% empty_activity_samples)
+  ) |>
+  unnest(samples) |>
+  mutate(flip = direction == 1)
+
+# Batch the GSEA calls: one fgsea() call per (cancer_type, sample), testing all interactions that use that sample at once
+gsea_activity_res <- activity_tasks |>
+  group_by(cancer_type, sample) |>
+  group_modify(function(df, keys) {
+
+    for (interaction in df$interaction) {
+      message(
+        "Cancer: ", keys$cancer_type
+      )
+    }
+
+    stab_vec <- tcga_stab[[keys$cancer_type]][, keys$sample]
+
+    res <- run_target_gsea_batch(
+      stab_vec,
+      set_names(df$kd_consistent_targets, df$interaction),
+      set_names(df$flip, df$interaction)
+    )
+
+    df |>
+      dplyr::select(interaction, RBP, miRNA, sign) |>
+      left_join(res, by = c("interaction" = "name"))
+  }) |>
+  ungroup()
+
+nrow(gsea_activity_res)
+```
+
+## Summarize the results as proportions of tested tumors in each category, for each interaction
+
+```{r}
+summary_activity <- summarize_enrichment(gsea_activity_res)
+summary_activity
+```
+
+## Plot
+
+```{r, fig.dim = c(7, 10)}
+p_activity <- stacked_plot(summary_activity)
+p_activity
+
+ggsave(
+  here("TCGA", "output", "figures", "TCGA_stab_vs_KDstab_miRtar_GSEA_candidateInts_byMirActivity.pdf"),
+  p_activity, width = 7, height = 10
+)
+```
+
+## Number of interactions with an unexpected significant enrichment
+
+```{r}
+summary_activity |> filter(not_expected_sig != 0) |> select(interaction, not_expected_sig)
+```
+
+## Average % of tumors with significant expected enrichment across interactions
+
+```{r}
+mean(summary_activity$expected_sig)
+range(summary_activity$expected_sig)
+```
+
+# Make two example plots showing the enrichment of miRNA targets, for the positive inferred interaction between SUPV3L1 and miR-19-3p
+
+## First in the tumor TCGA.EY.A1G8.01 (UCEC)
+
+```{r, fig.dim = c(5, 5)}
+example_density_plot <- function(rbp, mirna, int_sign, cell_line, sample, cancer_type) {
+  prep <- get_prep(rbp, mirna, int_sign, cell_line)
+  dat <- target_stability_table(tcga_stab[[cancer_type]][, sample], prep$med_stab_kd, prep$targets)
+
+  plot_target_density(
+    dat,
+    title = glue("{rbp} - {mirna} ({int_sign})\n{gsub('\\\\.', '-', sample)}"),
+    ylab = glue("Stability {rbp} KD in {cell_line}\n(median log2FC)")
+  )
+}
+
+example_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.EY.A1G8.01", "UCEC")
+```
+
+## Second in the tumor TCGA.DM.A1DA.01 (COAD)
+
+```{r, fig.dim = c(5, 5)}
+example_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.DM.A1DA.01", "COAD")
+```
+
+# Enrichment of RBP KD responsive miRNA targets among stabilized/destabilized genes in cancer, with the expectation of target stability change in cancer based **on differential RBP expression**
+
+## Load TCGA differential gene expression data from GDCRNAtools (per cancer type differential expression) and log2(RSEM) data (per sample absolute expression); mRNA stability data was already loaded above and is reused here.
+
+```{r}
+DE_files <- Sys.glob(here("TCGA", "data", "*_DGEA_GDCRNATools.rds"))
+DE_lst <- DE_files |>
+  set_names(str_extract(basename(DE_files), "(?<=TCGA-)[A-Z]+")) |>
+  map(readRDS)
+
+logRSEM_files <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.names = TRUE)
+logRSEM_data <- logRSEM_files |>
+  set_names(str_extract(basename(logRSEM_files), "^[A-Z]+")) |>
+  map(function(file) {
+    dat <- as.data.frame(fread(file))
+    rownames(dat) <- dat[[1]]
+    dat[, -1]
+  })
+
+# Keep the same cancer types across the stability, differential expression, and log2(RSEM) data
+common_cancers <- Reduce(intersect, list(names(tcga_stab), names(DE_lst), names(logRSEM_data)))
+DE_lst <- DE_lst[common_cancers]
+logRSEM_data <- logRSEM_data[common_cancers]
+common_cancers
+```
+
+## For each interaction, for each cancer type where the RBP differential expression is significant, and for each tumor within these cancer types where the log2FC(RSEM) between the tumor and the average of normal samples is at least 1 in the direction of the RBP differential expression for that cancer type, determine the expected enrichment of miRNA targets (among stabilized or destabilized mRNAs) based on the direction of the RBP expression change and the type of RBP-miRNA interaction (activating or inhibitory), then run the GSEA.
+
+Here the direction of interest (`rbp_de_dir`) is the sign of the RBP's own differential expression, which changes stability of the RBP-KD-consistent targets only in combination with the interaction sign (an increase in an activating RBP has the opposite effect on target stability from an increase in an inhibitory RBP) - so, unlike the miRNA-activity-based analysis above, the flip depends on both `rbp_de_dir` and `int_sign` together.
+
+Several interactions share the same RBP (e.g. `SUPV3L1` appears with both `miR-17-5p` and `miR-19-3p`), for which the eligible tumor samples (based on the RBP's own differential expression) are identical. As above, we cache this per-RBP sample selection and batch the `fgsea()` calls per (cancer_type, sample) across interactions.
+
+```{r}
+# Cancer types/samples where the RBP's differential expression qualifies it for testing,
+# cached per RBP since this does not depend on the miRNA or interaction sign, and several
+# interactions can share the same RBP.
+rbp_expr_cache <- new.env()
+get_rbp_expr_samples <- function(rbp) {
+  if (!is.null(rbp_expr_cache[[rbp]])) return(rbp_expr_cache[[rbp]])
+
+  if (!any(map_lgl(DE_lst[common_cancers], ~ rbp %in% .x$symbol)) ||
+      !any(map_lgl(logRSEM_data[common_cancers], ~ rbp %in% rownames(.x)))) {
+    rbp_expr_cache[[rbp]] <- tibble(cancer_type = character(), sample = character(), rbp_de_dir = numeric())
+    return(rbp_expr_cache[[rbp]])
+  }
+
+  # Cancer types where the RBP's differential expression is significant, and its direction
+  sig_cancers <- imap_dfr(DE_lst, function(de, cancer_type) {
+    de_row <- de[de$symbol == rbp, ]
+    if (nrow(de_row) == 0 || de_row$FDR[1] >= 0.05) return(NULL)
+    tibble(cancer_type = cancer_type, rbp_de_dir = sign(de_row$logFC[1]))
+  })
+
+  rbp_expr_cache[[rbp]] <- pmap_dfr(sig_cancers, function(cancer_type, rbp_de_dir) {
+    logrsem <- logRSEM_data[[cancer_type]]
+    normal_avg <- mean(unlist(logrsem[rbp, grep("-11$", colnames(logrsem))]))
+
+    tumor_samples <- colnames(tcga_stab[[cancer_type]])[grepl("\\.01$", colnames(tcga_stab[[cancer_type]]))]
+
+    map_dfr(tumor_samples, function(sample) {
+      logrsem_s <- logrsem[rbp, gsub("\\.", "-", sample)]
+      if (length(logrsem_s) == 0 || is.na(logrsem_s) || is.na(normal_avg)) return(tibble())
+
+      # Keep only samples where RSEM log2FC (tumor vs. avg normal) is at least 1 in the
+      # direction of the RBP's differential expression for this cancer type
+      diff <- logrsem_s - normal_avg
+      passes <- (rbp_de_dir == 1 && diff >= 1) || (rbp_de_dir == -1 && diff <= -1)
+      if (!passes) return(tibble())
+
+      tibble(cancer_type = cancer_type, sample = sample, rbp_de_dir = rbp_de_dir)
+    })
+  })
+
+  rbp_expr_cache[[rbp]]
+}
+
+# One row per (interaction, sample) to test.
+expression_tasks <- interactions |>
+  select(interaction, RBP, miRNA, sign, cell_line) |>
+  mutate(
+    kd_consistent_targets = pmap(
+      list(RBP, miRNA, sign, cell_line),
+      ~ get_prep(..1, ..2, ..3, ..4)$kd_consistent_targets
+    ),
+    sign_num = if_else(sign == "+", 1, -1),
+    samples = map(RBP, get_rbp_expr_samples)
+  ) |>
+  unnest(samples) |>
+  mutate(flip = rbp_de_dir == sign_num)
+
+# Batch the GSEA calls: one fgsea() call per (cancer_type, sample) across all interactions
+# that use that sample.
+gsea_expression_res <- expression_tasks |>
+  group_by(cancer_type, sample) |>
+  group_modify(function(df, keys) {
+    stab_vec <- tcga_stab[[keys$cancer_type]][, keys$sample]
+    res <- run_target_gsea_batch(
+      stab_vec,
+      set_names(df$kd_consistent_targets, df$interaction),
+      set_names(df$flip, df$interaction)
+    )
+    df |>
+      select(interaction, RBP, miRNA, sign) |>
+      left_join(res, by = c("interaction" = "name"))
+  }) |>
+  ungroup()
+
+nrow(gsea_expression_res)
+```
+
+## Summarize the results as proportions of tested tumors in each category, for each interaction
+
+```{r}
+summary_expression <- summarize_enrichment(gsea_expression_res)
+summary_expression
+```
+
+## Plot
+
+```{r, fig.dim = c(7.5, 10)}
+p_expression <- stacked_plot(summary_expression)
+p_expression
+
+ggsave(
+  here("TCGA", "output", "figures", "TCGA_stab_vs_KDstab_miRtar_GSEA_candidateInts_byRBPExpression.pdf"),
+  p_expression, width = 7.5, height = 10
+)
+```
+
+```{r}
+sessionInfo()
+```

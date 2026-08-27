@@ -1,0 +1,168 @@
+---
+title: 'Association between miRNA activity and tumor purity in TCGA tumors'
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+```
+
+# Load the miRNA activity data and filter for tumors
+
+```{r}
+miR_act <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_miRNA_activity.csv"))
+miR_act <- miR_act[miR_act$sample_type == "tumor", ]
+```
+
+# Load the list of miRNAs significantly dysregulated in at least 10 tumor samples in at least one cancer type
+
+```{r}
+sig_mirs <- read.csv(here("TCGA", "output", "supplementary_tables", "TCGA_sig_mirs_atleast10Tsamples_allCancers.csv")) |>
+  pull(miRNA) |>
+  unique()
+
+sig_mirs
+```
+
+# Load tumor purity estimates
+
+```{r}
+purity_files <- list.files(here("TCGA", "data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
+
+purity_data <- purity_files |>
+  setNames(str_extract(basename(purity_files), "(?<=purity_)[A-Z]+(?=\\.txt)")) |>
+  lapply(function(f) {
+    dat <- read.delim(f, stringsAsFactors = FALSE)
+    # Keep only primary tumor, vial A samples (-01A-)
+    dat <- dat[grepl("-01A-", dat$SampleName), ]
+    dat$sample <- str_extract(dat$SampleName, "^TCGA-[^-]+-[^-]+-01") |>
+      str_replace_all("-", ".")
+    dat[, c("sample", "Purity")]
+  })
+
+head(purity_data[["UCEC"]])
+```
+
+# Restrict the analysis to cancer types for which both miRNA activity and tumor purity estimates are available.
+
+```{r}
+cancer_types <- intersect(names(purity_data), unique(miR_act$cancer_type))
+cancer_types
+```
+
+# Correlations between miRNA activity and tumor purity, across cancer types
+
+```{r}
+# Helper function to compute the correlation between the activity of a given miRNA and tumor purity, within a given cancer type
+compute_purity_correlation <- function(mirna, cancer) {
+  mirna_data <- miR_act |>
+    filter(cancer_type == cancer, miRNA == mirna)
+
+  purity_cancer <- purity_data[[cancer]]
+
+  # Match samples between miRNA activity and purity data
+  common_samples <- intersect(mirna_data$sample_name, purity_cancer$sample)
+  if (length(common_samples) == 0) {
+    return(NULL)
+  }
+
+  mirna_matched <- mirna_data$coefficient_log2[match(common_samples, mirna_data$sample_name)]
+  purity_matched <- purity_cancer$Purity[match(common_samples, purity_cancer$sample)]
+
+  corr <- cor.test(mirna_matched, purity_matched)
+  tibble(r = corr$estimate, pval = corr$p.value, n = length(common_samples))
+}
+```
+
+```{r}
+# Compute the correlation for every significant miRNA, in every cancer type with purity data available
+corr_table_purity <- crossing(miRNA = sig_mirs, cancer = cancer_types) |>
+  mutate(corr_data = map2(miRNA, cancer, compute_purity_correlation)) |>
+  unnest(corr_data, keep_empty = TRUE) |>
+  filter(!is.na(r)) |>
+  mutate(
+    padj = p.adjust(pval, method = "fdr"),
+    minuslog10pvals = -log10(pval)
+  ) |>
+  dplyr::select(miRNA, cancer, r, pval, padj, minuslog10pvals, n) |>
+  as.data.frame()
+
+head(corr_table_purity)
+nrow(corr_table_purity)
+```
+
+# Cluster miRNAs and cancer types by their correlation coefficients
+
+```{r}
+r_mat <- corr_table_purity |>
+  dplyr::select(miRNA, cancer, r) |>
+  pivot_wider(names_from = cancer, values_from = r) |>
+  column_to_rownames("miRNA") |>
+  as.matrix()
+
+row_clust <- hclust(dist(r_mat, method = "euclidean"), method = "complete")
+col_clust <- hclust(dist(t(r_mat), method = "euclidean"), method = "complete")
+
+mirna_levels <- rownames(r_mat)[row_clust$order]
+cancer_levels <- colnames(r_mat)[col_clust$order]
+```
+
+# Make the data table for the dotplot, clustered and converting saturated values
+
+```{r}
+pval_lim <- 10
+coeff_lim <- 0.4
+
+dat_htmp_purity <- corr_table_purity |>
+  transmute(
+    miRNAs = factor(miRNA, levels = mirna_levels),
+    Cancers = factor(cancer, levels = cancer_levels),
+    `-log10(p-value)` = pmin(minuslog10pvals, pval_lim),
+    `Pearson r` = pmax(pmin(r, coeff_lim), -coeff_lim),
+    FDR = as.integer(padj < 0.05)
+  )
+```
+
+# Dotplot
+
+```{r, fig.dim = c(9.5, 7), fig.align = 'center'}
+dotplot_purity <- ggplot(dat_htmp_purity, aes(x = Cancers, y = miRNAs)) +
+  geom_point(aes(size = `-log10(p-value)`, fill = `Pearson r`, color = FDR),
+             shape = 21, stroke = 1) +
+  scale_fill_gradient2(limits = c(-coeff_lim, coeff_lim), low = "blue", mid = "white", high = "red") +
+  scale_colour_gradient(limits = c(0, 1), low = "white", high = "black") +
+  scale_size("-log10(p-value)", range = c(0.1, 10), breaks = seq(0, pval_lim, 2), limits = c(0, pval_lim)) +
+  guides(size = guide_legend(override.aes = list(fill = "black"))) +
+  labs(x = "", y = "") +
+  theme(
+    legend.key.size = unit(1.5, "lines"),
+    text = element_text(size = 12),
+    axis.text = element_text(size = 12),
+    axis.text.x = element_text(angle = 90, size = 12, vjust = 0.5, hjust = 1),
+    panel.background = element_rect(fill = "white", colour = "white"),
+    plot.margin = unit(c(1, 1, 1, 1), "cm")
+  )
+
+dotplot_purity
+
+pdf(here("TCGA", "output", "figures", "TCGA_corrMirActVsPurity_dotplot.pdf"), width = 8, height = 7)
+print(dotplot_purity)
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```
