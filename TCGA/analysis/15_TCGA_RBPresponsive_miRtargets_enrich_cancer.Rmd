@@ -114,7 +114,7 @@ colnames(miR_int) <- ifelse(
 )
 ```
 
-# Load the list candidate RBP-miRNA interactions (output from RBP_expression_vs_miRNA_activity.Rmd)
+# Load the list candidate RBP-miRNA interactions 
 
 ```{r}
 interactions <- read.csv(here("TCGA", "output", "supplementary_tables", "interactions_RBPKD_ENCODEcellsTissues_TCGA_purityCorrected.csv"))[, -1]
@@ -191,7 +191,7 @@ get_prep <- function(rbp, mirna, int_sign, cell_line) {
 run_target_gsea_batch <- function(stab_vec, gene_sets, flip, min_size = 10) {
 
   stab_vec <- stab_vec[!is.na(stab_vec)]
-  stab_vec <- sort(log2(exp(stab_vec)), decreasing = TRUE)
+  stab_vec <- sort(ln_to_log2(stab_vec), decreasing = TRUE)
 
   gene_sets <- map(gene_sets, intersect, names(stab_vec))
   # Skip gene sets with fewer than min_size targets available in the ranked gene list
@@ -238,12 +238,21 @@ summarize_enrichment <- function(gsea_df) {
 # Diverging stacked bar plot of the summary table produced by summarize_enrichment().
 stacked_plot <- function(summary_df) {
   category_levels <- c(
-    "Not as expected, significant", "Not as expected, not significant",
-    "As expected, not significant", "As expected, significant"
+    "Not as expected, not significant", 
+    "Not as expected, significant",
+    "As expected, not significant",  
+    "As expected, significant"
   )
-  category_colors <- setNames(c("#CD3278", "#FFAEB9", "#B9D3EE", "#6495ED"), category_levels)
+  category_colors <- setNames(c("#B9D3EE", "#6495ED", "#FFAEB9", "#CD3278"), category_levels)
+
+  # Create a mapping from interaction names to their signs
+  int_sign_map <- setNames(interactions$sign, interactions$interaction)
 
   plot_df <- summary_df |>
+    mutate(
+      int_sign = int_sign_map[interaction],
+      interaction = paste0(interaction, " (", int_sign, ")")
+    ) |>
     transmute(
       interaction,
       `Not as expected, significant` = -not_expected_sig,
@@ -261,7 +270,13 @@ stacked_plot <- function(summary_df) {
     scale_x_continuous(labels = scales::percent, limits = c(-1, 1)) +
     labs(x = "Proportion of tumors", y = NULL, fill = NULL) +
     theme_classic() +
-    theme(legend.position = "right")
+    theme(
+      legend.position = "right", 
+      legend.text = element_text(size = 10),
+      axis.text = element_text(size = 8),
+      axis.title = element_text(size = 10),
+      legend.title = element_text(size = 10)
+    )
 }
 ```
 
@@ -289,6 +304,7 @@ plot_target_density <- function(dat, title, ylab, lims = c(-4, 4, -1, 1), zlim =
   f2 <- MASS::kde2d(non_targets$stab_tumor, non_targets$stab_kd, lims = lims, n = 500, h = 0.3)
   zvalues <- pmax(pmin(f1$z - f2$z, zlim[2]), zlim[1])
 
+  par(mar = c(5, 5, 4, 2) + 0.5)
   image(f2$x, f2$y, zvalues,
         zlim = zlim, col = colorRampPalette(c("blue", "white", "red"))(100),
         xlab = "Stability tumor vs normal (log2FC)", ylab = ylab)
@@ -328,8 +344,14 @@ activity_tasks <- interactions |>
 gsea_activity_res <- activity_tasks |>
   group_by(cancer_type, sample) |>
   group_modify(function(df, keys) {
+  
+    stopifnot(
+      keys$cancer_type %in% names(tcga_stab),
+      keys$sample %in% colnames(tcga_stab[[keys$cancer_type]])
+    )
+  
     stab_vec <- tcga_stab[[keys$cancer_type]][, keys$sample]
-
+  
     res <- run_target_gsea_batch(
       stab_vec,
       set_names(df$kd_consistent_targets, df$interaction),
@@ -350,57 +372,83 @@ saveRDS(gsea_activity_res, here("TCGA", "output", "rds", "TCGAstab_vs_KDstab_miR
 
 ```{r}
 summary_activity <- summarize_enrichment(gsea_activity_res)
-summary_activity
+as.data.frame(summary_activity)
 ```
 
-## Plot
+## Stacked bar plot
 
-```{r, fig.dim = c(7, 10)}
+```{r, fig.dim = c(7, 3)}
 p_activity <- stacked_plot(summary_activity)
 p_activity
 
 ggsave(
   here("TCGA", "output", "figures", "TCGAstab_vs_KDstab_miRtar_GSEA_candidateInts_byMirActivity.pdf"),
-  p_activity, width = 7, height = 10
+  p_activity, width = 8, height = 2.1
 )
 ```
 
-## Number of interactions with an unexpected significant enrichment
+## Smallest % of tumors where the miRNA targets responsive to in vitro RBP inhibition were dysregulated in the expected direction, regardless of significance (interaction with the smallest %) 
 
 ```{r}
-summary_activity |> filter(not_expected_sig != 0) |> select(interaction, not_expected_sig)
+(summary_activity$expected_sig + summary_activity$expected_ns)*100
+
+min(summary_activity$expected_sig + summary_activity$expected_ns)*100
 ```
 
 ## Average % of tumors with significant expected enrichment across interactions
 
 ```{r}
-mean(summary_activity$expected_sig)
-range(summary_activity$expected_sig)
+mean(summary_activity$expected_sig)*100
+range(summary_activity$expected_sig)*100
+```
+
+## Largest % of tumors where for the interactions where the miRNA shows a significant change in activity in at least one tumor, the miRNA targets responsive to in vitro RBP inhibition were dysregulated in the UN-expected direction (interaction with the largest %) 
+
+```{r}
+max(summary_activity$not_expected_sig)*100
 ```
 
 # Make two example plots showing the enrichment of miRNA targets, for the positive inferred interaction between SUPV3L1 and miR-19-3p
-
-## First in the tumor TCGA.EY.A1G8.01 (UCEC)
 
 ```{r, fig.dim = c(5, 5)}
 example_density_plot <- function(rbp, mirna, int_sign, cell_line, sample, cancer_type) {
   prep <- get_prep(rbp, mirna, int_sign, cell_line)
   dat <- target_stability_table(tcga_stab[[cancer_type]][, sample], prep$med_stab_kd, prep$targets)
 
-  plot_target_density(
+  p <- plot_target_density(
     dat,
     title = glue("{rbp} - {mirna} ({int_sign})\n{gsub('\\\\.', '-', sample)}"),
     ylab = glue("Stability {rbp} KD in {cell_line}\n(median log2FC)")
   )
+  p
 }
 
-example_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.EY.A1G8.01", "UCEC")
-```
+save_density_plot <- function(rbp, mirna, int_sign, cell_line, sample, cancer_type, filename) {
+  prep <- get_prep(rbp, mirna, int_sign, cell_line)
+  dat <- target_stability_table(tcga_stab[[cancer_type]][, sample], prep$med_stab_kd, prep$targets)
+  
+  pdf(here("TCGA", "output", "figures", filename), width = 3.5, height = 4)
+  par(mar = c(5, 5, 4, 2) + 0.5)
+  targets <- dat |> filter(is_target)
+  non_targets <- dat |> filter(!is_target)
+  
+  f1 <- MASS::kde2d(targets$stab_tumor, targets$stab_kd, lims = c(-4, 4, -1, 1), n = 500, h = 0.3)
+  f2 <- MASS::kde2d(non_targets$stab_tumor, non_targets$stab_kd, lims = c(-4, 4, -1, 1), n = 500, h = 0.3)
+  zvalues <- pmax(pmin(f1$z - f2$z, 0.3), -0.3)
+  
+  image(f2$x, f2$y, zvalues,
+        zlim = c(-0.3, 0.3), col = colorRampPalette(c("blue", "white", "red"))(100),
+        xlab = "Stability tumor vs normal (log2FC)", 
+        ylab = glue("Stability {rbp} KD in {cell_line}\n(median log2FC)"))
+  abline(v = 0, h = 0, col = "black", lty = 2)
+  title(main = glue("{rbp} - {mirna} ({int_sign})\n{gsub('\\\\.', '-', sample)}"), font.main = 1)
+  dev.off()
+  
+  invisible(NULL)
+}
 
-## Second in the tumor TCGA.DM.A1DA.01 (COAD)
-
-```{r, fig.dim = c(5, 5)}
-example_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.DM.A1DA.01", "COAD")
+save_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.EY.A1G8.01", "UCEC", "TCGA_density_SUPV3L1_miR19_UCEC.pdf")
+save_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.DM.A1DA.01", "COAD", "TCGA_density_SUPV3L1_miR19_COAD.pdf")
 ```
 
 # Enrichment of RBP KD responsive miRNA targets among stabilized/destabilized genes in cancer, with the expectation of target stability change in cancer based **on differential RBP expression**
@@ -436,24 +484,33 @@ Here the direction of interest (`rbp_de_dir`) is the sign of the RBP's own diffe
 Several interactions share the same RBP (e.g. `SUPV3L1` appears with both `miR-17-5p` and `miR-19-3p`), for which the eligible tumor samples (based on the RBP's own differential expression) are identical. As above, we cache this per-RBP sample selection and batch the `fgsea()` calls per (cancer_type, sample) across interactions.
 
 ```{r}
-# Cancer types/samples where the RBP's differential expression qualifies it for testing,
-# cached per RBP since this does not depend on the miRNA or interaction sign, and several
-# interactions can share the same RBP.
+# Cancer types/samples where the RBP's differential expression qualifies it for testing, cached per RBP since this does not depend on the miRNA or interaction sign, and several interactions can share the same RBP.
 rbp_expr_cache <- new.env()
 get_rbp_expr_samples <- function(rbp) {
   if (!is.null(rbp_expr_cache[[rbp]])) return(rbp_expr_cache[[rbp]])
 
-  if (!any(map_lgl(DE_lst[common_cancers], ~ rbp %in% .x$symbol)) ||
-      !any(map_lgl(logRSEM_data[common_cancers], ~ rbp %in% rownames(.x)))) {
-    rbp_expr_cache[[rbp]] <- tibble(cancer_type = character(), sample = character(), rbp_de_dir = numeric())
-    return(rbp_expr_cache[[rbp]])
-  }
-
   # Cancer types where the RBP's differential expression is significant, and its direction
   sig_cancers <- imap_dfr(DE_lst, function(de, cancer_type) {
+  
     de_row <- de[de$symbol == rbp, ]
-    if (nrow(de_row) == 0 || de_row$FDR[1] >= 0.05) return(NULL)
-    tibble(cancer_type = cancer_type, rbp_de_dir = sign(de_row$logFC[1]))
+  
+    # Keep only cancer types where:
+    # 1. the RBP is present in the DE results
+    # 2. the RBP is significant
+    # 3. the RBP is also present in the corresponding RSEM data
+    if (
+      nrow(de_row) == 0 ||
+      is.na(de_row$FDR[1]) ||
+      de_row$FDR[1] >= 0.05 ||
+      !rbp %in% rownames(logRSEM_data[[cancer_type]])
+    ) {
+      return(NULL)
+    }
+  
+    tibble(
+      cancer_type = cancer_type,
+      rbp_de_dir = sign(de_row$logFC[1])
+    )
   })
 
   rbp_expr_cache[[rbp]] <- pmap_dfr(sig_cancers, function(cancer_type, rbp_de_dir) {
@@ -463,11 +520,14 @@ get_rbp_expr_samples <- function(rbp) {
     tumor_samples <- colnames(tcga_stab[[cancer_type]])[grepl("\\.01$", colnames(tcga_stab[[cancer_type]]))]
 
     map_dfr(tumor_samples, function(sample) {
-      logrsem_s <- logrsem[rbp, gsub("\\.", "-", sample)]
+      logrsem_sample <- gsub("\\.", "-", sample)
+      if (!logrsem_sample %in% colnames(logrsem)) {
+        return(tibble())
+      }
+      logrsem_s <- logrsem[rbp, logrsem_sample]
       if (length(logrsem_s) == 0 || is.na(logrsem_s) || is.na(normal_avg)) return(tibble())
 
-      # Keep only samples where RSEM log2FC (tumor vs. avg normal) is at least 1 in the
-      # direction of the RBP's differential expression for this cancer type
+      # Keep only samples where RSEM log2FC (tumor vs. avg normal) is at least 1 in the direction of the RBP's differential expression for this cancer type
       diff <- logrsem_s - normal_avg
       passes <- (rbp_de_dir == 1 && diff >= 1) || (rbp_de_dir == -1 && diff <= -1)
       if (!passes) return(tibble())
@@ -481,7 +541,7 @@ get_rbp_expr_samples <- function(rbp) {
 
 # One row per (interaction, sample) to test.
 expression_tasks <- interactions |>
-  select(interaction, RBP, miRNA, sign, cell_line) |>
+  dplyr::select(interaction, RBP, miRNA, sign, cell_line) |>
   mutate(
     kd_consistent_targets = pmap(
       list(RBP, miRNA, sign, cell_line),
@@ -498,14 +558,21 @@ expression_tasks <- interactions |>
 gsea_expression_res <- expression_tasks |>
   group_by(cancer_type, sample) |>
   group_modify(function(df, keys) {
+  
+    stopifnot(
+      keys$cancer_type %in% names(tcga_stab),
+      keys$sample %in% colnames(tcga_stab[[keys$cancer_type]])
+    )
+  
     stab_vec <- tcga_stab[[keys$cancer_type]][, keys$sample]
+  
     res <- run_target_gsea_batch(
       stab_vec,
       set_names(df$kd_consistent_targets, df$interaction),
       set_names(df$flip, df$interaction)
     )
     df |>
-      select(interaction, RBP, miRNA, sign) |>
+      dplyr::select(interaction, RBP, miRNA, sign) |>
       left_join(res, by = c("interaction" = "name"))
   }) |>
   ungroup()
@@ -517,19 +584,27 @@ saveRDS(gsea_expression_res, here("TCGA", "output", "rds", "TCGAstab_vs_KDstab_m
 ## Summarize the results as proportions of tested tumors in each category, for each interaction
 
 ```{r}
-summary_expression <- summarize_enrichment(gsea_expression_res)
-summary_expression
+summary_expr <- summarize_enrichment(gsea_expression_res)
+
+(summary_expr$expected_sig + summary_expr$expected_ns)*100
+
+min(summary_expr$expected_sig + summary_expr$expected_ns)*100
+
+mean(summary_expr$expected_sig)*100
+range(summary_expr$expected_sig)*100
+
+max(summary_expr$not_expected_sig)*100
 ```
 
-## Plot
+## Stacked bar plot
 
-```{r, fig.dim = c(7.5, 10)}
-p_expression <- stacked_plot(summary_expression)
+```{r, fig.dim = c(7, 3)}
+p_expression <- stacked_plot(summary_expr)
 p_expression
 
 ggsave(
   here("TCGA", "output", "figures", "TCGAstab_vs_KDstab_miRtar_GSEA_candidateInts_byRBPExpression.pdf"),
-  p_expression, width = 7.5, height = 10
+  p_expression, width = 7, height = 3
 )
 ```
 
