@@ -1,0 +1,100 @@
+---
+title: "Effect of DDX55 knockdown (ENCODE) on functional miR-29 targets defined using miR-29 inhibition and over-expression experiments"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+# Load libraries
+
+```{r}
+library(venn)
+library(fgsea)
+```
+
+# Load the miRNA-binding matrix
+
+```{r}
+binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), row.names = 1, header = TRUE)
+```
+
+# Define miR-29 predicted targets
+
+```{r}
+pred_tars <- row.names(binding)[binding[, "miR.29abcd"] > 0]
+```
+
+# Load the differential gene expression data for the DDX55 KD experiment from ENCODE. Retain only non-NA entries
+
+```{r}
+DDX55_KD <- readRDS("ENCODE_DDX55_KD_DESeq2_res.rds")
+DDX55_KD <- DDX55_KD[ !is.na(DDX55_KD$padj), ] 
+```
+
+Load the differential expression analysis results for the miR-29 mimic experiment in 786-O cells (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
+
+```{r}
+mimic_786O <- readRDS("siDDX55_res_condition_Mimic.miR_vs_Mimic.neg.rds")
+mimic_786O <- mimic_786O[ !is.na(mimic_786O$padj), ]
+```
+
+Load the differential expression analysis results for the miR-29 mimic experiment in A-498 cells (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
+
+```{r}
+mimic_A498 <- readRDS("DiffRAC_miR29_validation_mimic_res_condition_miR29_mimic_vs_miR29_mimic_ctrl.rds")
+mimic_A498 <- mimic_A498[ !is.na(mimic_A498$padj), ]
+```
+
+Load the differential expression analysis results for the miR-29 inhibition experiment in ACHN cells (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
+
+```{r}
+inhib_ACHN <- readRDS("DiffRAC_miR29_validation_inhibition_res_condition_miR29_inhibition_vs_miR29_inhibition_ctrl.rds")
+inhib_ACHN <- inhib_ACHN[ !is.na(inhib_ACHN$padj), ]
+```
+
+Define functional miR-29 targets: Genes that are predicted targets of miR-29 and at least one of these categories:
+- significantly downregulated in a miR-29
+- significantly upregulated in the inhibition experiment
+
+```{r}
+down_786O <- row.names(mimic_786O)[mimic_786O$padj < 0.05 & mimic_786O$log2FoldChange < 0]
+down_A498 <- row.names(mimic_A498)[mimic_A498$padj < 0.05 & mimic_A498$log2FoldChange < 0]
+up_ACHN <- row.names(inhib_ACHN)[mimic_A498$padj < 0.05 & mimic_A498$log2FoldChange > 0]
+tars <- pred_tars[pred_tars %in% down_786O | pred_tars %in% down_A498 | pred_tars %in% up_ACHN]
+```
+
+GSEA to define the enrichment of these miR-29 targets among up/down-regulated genes in the DDX55 KD from ENCODE. We
+
+```{r}
+genelist <- list(tars)
+stat <- DDX55_KD$stat
+names(stat) <- row.names(DDX55_KD)
+names(genelist) <- "miR-29 functional targets"
+fgseaRes <- fgsea(pathways = genelist,
+  stats = stat,
+  minSize=10)
+print(plotEnrichment(genelist[[1]], stat, gseaParam = 1, ticksSize = 0.05))
+fgseaRes$ES
+fgseaRes$pval
+```
+
+Also save the figure
+
+```{r}
+pdf("GSEA_miR-29_targets_mimic_inhibition_DDX55_KD.pdf", height=3, width=4)
+plotEnrichment(genelist[[1]], stat, gseaParam = 1, ticksSize = 0.05)
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```

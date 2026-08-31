@@ -1,0 +1,284 @@
+---
+title: 'Association between DDX55 expression and survival in TCGA patients'
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+# Load libraries
+
+```{r}
+library(data.table)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(tibble)
+library(ggplot2)
+library(survival)
+library(survminer)
+```
+
+# Locate the data files
+
+```{r}
+logRSEM_files <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.names = TRUE)
+clin_files <- Sys.glob(here("TCGA", "data", "*.merged_only_clinical_clin_format.txt"))
+purity_files <- list.files(here("TCGA", "data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
+
+cancers <- str_remove(basename(logRSEM_files), "_log2RSEM\\.csv$")
+```
+
+# Helper functions
+
+```{r}
+# Long table of expression for one gene, for one tumor sample per patient, across all cancer types found in `logRSEM_files`.
+load_gene_expression <- function(gene_name, logRSEM_files) {
+  map_dfr(logRSEM_files, function(file) {
+    df <- fread(file, header = TRUE)
+    tibble(
+      sample = colnames(df)[-1],
+      cancer = str_remove(basename(file), "_log2RSEM\\.csv$"),
+      expr = as.numeric(df[df[[1]] == gene_name, -1, with = FALSE])
+    )
+  }) |>
+    filter(str_detect(sample, "-01$")) |>
+    transmute(patient = str_remove(sample, "-01$"), cancer, expr)
+}
+```
+
+```{r}
+# TCGA pathologic stage strings (e.g. "Stage IIIA") to numeric stage (1-4).
+stage_to_numeric <- function(stage) {
+  roman <- str_extract(toupper(stage), "IV|III|II|I")
+  suppressWarnings(as.numeric(as.roman(roman)))
+}
+
+# Clinical data files store one column per patient; transpose to one row per patient with the original column headers as variable names.
+read_clinical_raw <- function(cancer, clin_files) {
+  file <- clin_files[str_detect(clin_files, cancer)]
+  if (length(file) == 0) return(NULL)
+  clinical <- t(fread(file, header = TRUE, sep = "\t"))
+  colnames(clinical) <- clinical[1, ]
+  as.data.frame(clinical[-1, , drop = FALSE], stringsAsFactors = FALSE)
+}
+
+# Minimal survival variables (time, status), used for the Kaplan-Meier plot.
+load_survival_data <- function(cancer, clin_files) {
+  clinical <- read_clinical_raw(cancer, clin_files)
+  if (is.null(clinical)) return(NULL)
+  clinical |>
+    transmute(
+      patient = toupper(patient.bcr_patient_barcode),
+      time = coalesce(as.numeric(patient.days_to_death), as.numeric(patient.days_to_last_followup)),
+      status = case_when(
+        toupper(patient.vital_status) %in% c("ALIVE", "LIVING") ~ 0,
+        toupper(patient.vital_status) == "DEAD" ~ 1
+      )
+    ) |>
+    filter(!is.na(time), !is.na(status))
+}
+
+# Survival variables plus age and stage, for the COX models
+load_clinical_data <- function(cancer, clin_files) {
+  clinical <- read_clinical_raw(cancer, clin_files)
+  if (is.null(clinical) || !"patient.stage_event.pathologic_stage" %in% colnames(clinical)) {
+    return(NULL)
+  }
+
+  age_vars <- intersect(
+    c("patient.age_at_initial_pathologic_diagnosis",
+      "patient.primary_pathology.age_at_initial_pathologic_diagnosis"),
+    colnames(clinical)
+  )
+  if (length(age_vars) == 0) return(NULL)
+
+  clinical$age <- if (length(age_vars) == 2) {
+    rowSums(sapply(clinical[age_vars], as.numeric), na.rm = TRUE)
+  } else {
+    as.numeric(clinical[[age_vars]])
+  }
+
+  clinical |>
+    transmute(
+      patient = toupper(patient.bcr_patient_barcode),
+      time = coalesce(as.numeric(patient.days_to_death), as.numeric(patient.days_to_last_followup)),
+      status = case_when(
+        toupper(patient.vital_status) %in% c("ALIVE", "LIVING") ~ 0,
+        toupper(patient.vital_status) == "DEAD" ~ 1
+      ),
+      age = age,
+      stage = stage_to_numeric(patient.stage_event.pathologic_stage)
+    ) |>
+    filter(!is.na(time), !is.na(status), !is.na(age), !is.na(stage))
+}
+```
+
+```{r}
+# Tumor purity for one cancer type
+load_purity_data <- function(cancer, purity_files) {
+  file <- purity_files[str_detect(purity_files, cancer)]
+  if (length(file) == 0) return(NULL)
+  purity <- read.table(file, header = TRUE, row.names = 1)
+  if (nrow(purity) == 0) return(NULL)
+  purity |>
+    rownames_to_column("sample") |>
+    filter(str_detect(sample, "-01A-")) |>
+    transmute(patient = substr(sample, 1, 12), purity = Purity)
+}
+```
+
+```{r}
+extract_cox_stats <- function(fit) {
+  s <- coef(summary(fit))
+  tibble(coeff = unname(fit$coefficients[1]), pval = s[1, 5], se = s[1, 3])
+}
+
+# For one cancer type, fit a COX model for gene expression (one gene), correcting for stage only, and (when tumor purity data is available) a second model also correcting for age and tumor purity. Returns NULL if there isn't enough data to fit even the stage-only model
+run_cox_regression <- function(cancer, expr, clin_files, purity_files, min_patients = 10) {
+  clinical <- load_clinical_data(cancer, clin_files)
+  if (is.null(clinical)) return(NULL)
+
+  data <- inner_join(clinical, filter(expr, cancer == !!cancer), by = "patient")
+  if (nrow(data) < min_patients) return(NULL)
+
+  fit_wo_conf <- coxph(Surv(time, status) ~ expr + stage, data = data)
+  stats_wo_conf <- extract_cox_stats(fit_wo_conf) |> rename_with(~ paste0(., "_wo_conf"))
+
+  stats_conf <- tibble(coeff_conf = NA_real_, pval_conf = NA_real_, se_conf = NA_real_)
+  purity <- load_purity_data(cancer, purity_files)
+  if (!is.null(purity)) {
+    data_conf <- inner_join(data, purity, by = "patient")
+    if (nrow(data_conf) >= min_patients) {
+      fit_conf <- coxph(Surv(time, status) ~ expr + age + stage + purity, data = data_conf, iter.max = 30)
+      stats_conf <- extract_cox_stats(fit_conf) |> rename_with(~ paste0(., "_conf"))
+    }
+  }
+
+  bind_cols(tibble(cancer = cancer), stats_wo_conf, stats_conf)
+}
+```
+
+```{r}
+# Bar plot of COX coefficients per cancer type, colored by the signed -log10(p-value) (with saturation limits), with the standard error as the error bars
+plot_cox_results <- function(data, coeff_col, se_col, signed_log10p_col, ylim, lim = 5) {
+  data <- data |>
+    arrange(desc(.data[[coeff_col]])) |>
+    mutate(
+      cancer = factor(cancer, levels = cancer),
+      color_val = pmin(pmax(.data[[signed_log10p_col]], -lim), lim)
+    )
+
+  ggplot(data, aes(x = cancer, y = .data[[coeff_col]], fill = color_val)) +
+    geom_col(color = "black", linewidth = 0.2) +
+    geom_errorbar(
+      aes(ymin = .data[[coeff_col]] - .data[[se_col]], ymax = .data[[coeff_col]] + .data[[se_col]]),
+      width = 0.2, linewidth = 0.3
+    ) +
+    scale_fill_gradientn(colors = c("darkblue", "blue", "white", "red", "darkred"), limits = c(-lim, lim)) +
+    coord_cartesian(ylim = ylim) +
+    labs(x = NULL, y = "COX regression coefficient", fill = "signed\nlog10(p)") +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+      panel.grid = element_blank(),
+      axis.line.y = element_line(color = "black", linewidth = 0.5),
+      axis.ticks.y = element_line(color = "black", linewidth = 0.5)
+    )
+}
+```
+
+```{r}
+# Kaplan-Meier plot for one cancer type, splitting patients into "high"/"low" expression groups at the median (patients equal to the median are dropped)
+plot_survival_by_expression <- function(cancer, gene_name, expr, clin_files) {
+  data <- load_survival_data(cancer, clin_files) |>
+    inner_join(filter(expr, cancer == !!cancer), by = "patient") |>
+    mutate(
+      expr_group = case_when(
+        expr > median(expr) ~ "High expression",
+        expr < median(expr) ~ "Low expression",
+        TRUE ~ NA_character_
+      )
+    ) |>
+    filter(!is.na(expr_group))
+
+  fit <- survfit(Surv(time, status) ~ expr_group, data = data)
+  p <- ggsurvplot(
+    fit, data = data, pval = TRUE,
+    title = cancer,
+    font.main = c(10, "bold", "black"),
+    xlab = "Time (days)",
+    legend = "none",
+    palette = c("brown1", "dodgerblue")
+  )
+  p$plot <- p$plot + theme(plot.title = element_text(hjust = 0.5))
+  p
+}
+```
+
+# Run the analysis for the gene of interest
+
+```{r}
+gene_name <- "DDX55"
+
+gene_expr <- load_gene_expression(gene_name, logRSEM_files)
+head(gene_expr)
+```
+
+# COX regression across all cancer types
+
+For each cancer type, fit a COX model correcting for stage only, and a second model also correcting for age and tumor purity where available
+
+```{r}
+cox_results <- map(
+  cancers, run_cox_regression,
+  expr = gene_expr, clin_files = clin_files, purity_files = purity_files
+) |>
+  list_rbind() |>
+  filter(!is.na(coeff_wo_conf)) |>
+  mutate(
+    signedLog10pval_wo_conf = sign(coeff_wo_conf) * -log10(pval_wo_conf),
+    signedLog10pval_w_conf = sign(coeff_conf) * -log10(pval_conf)
+  )
+```
+
+## Correcting for stage only
+
+```{r}
+p <- plot_cox_results(cox_results, "coeff_wo_conf", "se_wo_conf", "signedLog10pval_wo_conf", ylim = c(-1, 5))
+ggsave(here("TCGA", "output", "figures", "TCGA_DDX55_cox_stage_only.pdf"), plot = p, width = 4, height = 3)
+
+p
+```
+
+## Additionally correcting for age and tumor purity
+
+```{r}
+p <- cox_results |>
+  filter(!is.na(coeff_conf)) |>
+  plot_cox_results("coeff_conf", "se_conf", "signedLog10pval_w_conf", ylim = c(-1, 5))
+ggsave(here("TCGA", "output", "figures", "TCGA_DDX55_cox_with_confounders.pdf"), plot = p, width = 4, height = 3)
+
+p
+```
+
+# Kaplan-Meier survival curve in KIRC
+
+```{r}
+p <- plot_survival_by_expression("KIRC", gene_name, gene_expr, clin_files)
+ggsave(here("TCGA", "output", "figures", "TCGA_DDX55_km_KIRC.pdf"), plot = p$plot, width = 4, height = 4)
+
+p
+```
+
+```{r}
+sessionInfo()
+```
