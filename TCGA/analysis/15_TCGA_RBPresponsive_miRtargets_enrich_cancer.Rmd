@@ -553,8 +553,7 @@ expression_tasks <- interactions |>
   unnest(samples) |>
   mutate(flip = rbp_de_dir == sign_num)
 
-# Batch the GSEA calls: one fgsea() call per (cancer_type, sample) across all interactions
-# that use that sample.
+# Batch the GSEA calls: one fgsea() call per (cancer_type, sample) across all interactions that use that sample.
 gsea_expression_res <- expression_tasks |>
   group_by(cancer_type, sample) |>
   group_modify(function(df, keys) {
