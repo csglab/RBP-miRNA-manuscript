@@ -67,7 +67,7 @@ miRNA_RBPs$RBP_ID <- annotation$ensembl_gene_id[match(miRNA_RBPs$RBP, annotation
 # Load gene expression profiles (FPKM)
 
 ```{r}
-FPKM <- fread(here("ENCODE_tissues_cell_lines", "data", "ENCODE_total_RNA-seq_gene_FPKM.csv"))
+FPKM <- fread(here("data", "ENCODE_total_RNA-seq_gene_FPKM.csv"))
 FPKM <- FPKM[,-1]
 FPKM <- column_to_rownames(FPKM, var = "gene_id")
 ```

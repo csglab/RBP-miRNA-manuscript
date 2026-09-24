@@ -30,9 +30,9 @@ library(survminer)
 # Locate the data files
 
 ```{r}
-logRSEM_files <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.names = TRUE)
-clin_files <- Sys.glob(here("TCGA", "data", "*.merged_only_clinical_clin_format.txt"))
-purity_files <- list.files(here("TCGA", "data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
+logRSEM_files <- list.files(here("data"), pattern = "log2RSEM.csv", full.names = TRUE)
+clin_files <- Sys.glob(here("data", "*.merged_only_clinical_clin_format.txt"))
+purity_files <- list.files(here("data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
 
 cancers <- str_remove(basename(logRSEM_files), "_log2RSEM\\.csv$")
 ```

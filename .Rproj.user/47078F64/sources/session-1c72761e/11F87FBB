@@ -1,0 +1,25 @@
+{
+    "id": "11F87FBB",
+    "path": "~/Documents/RBP-miRNA-manuscript/ENCODE_RBP_KD/analysis/04_ENCODE_RBP_KD_miRNA_activity.Rmd",
+    "project_path": "ENCODE_RBP_KD/analysis/04_ENCODE_RBP_KD_miRNA_activity.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1790270009697.0,
+    "source_on_save": false,
+    "relative_order": 4,
+    "properties": {
+        "chunk_output_type": "console",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1790269853,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1790269853,
+    "read_only": false,
+    "read_only_alternatives": []
+}

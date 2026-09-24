@@ -34,7 +34,7 @@ library(rsvd)
 
 ```{r}
 # Extract cancer IDs from BETAS_ddf files 
-cancer_IDs <- list.files(here("TCGA", "data"), pattern = "BETAS_ddf\\.csv$") |>
+cancer_IDs <- list.files(here("data"), pattern = "BETAS_ddf\\.csv$") |>
   sub("TCGA-", "", x = _) |>
   sub(".BETAS_ddf.csv", "", x = _)
 
@@ -44,9 +44,9 @@ cat("Cancer IDs found:", paste(cancer_IDs, collapse = ", "), "\n")
 # Load the 3'UTR nucleotide composition and length annotations, and miRNA seed matches
 
 ```{r}
-UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
-UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
-miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
+UTR_nt <- read.table(here("data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
+miR_binding <- read.csv(here("data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
 ```
 
 # Define miRNA name mapping

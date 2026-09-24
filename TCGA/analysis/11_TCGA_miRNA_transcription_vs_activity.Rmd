@@ -35,7 +35,7 @@ We use the miRNA annotation from miRBase ftp://mirbase.smith.man.ac.uk/pub/mirba
 
 ```{r}
 # Load the miRBase annotation
-mir_annot <- import(here("TCGA", "data", "hsa.gff3"))
+mir_annot <- import(here("data", "hsa.gff3"))
 mir_annot <- as.data.frame(mir_annot)
 
 # Select for pri-miRNAs
@@ -46,7 +46,7 @@ head(pri_mir_annot)
 
 ```{r}
 # Load the intron annotation
-intron_annot <- import(here("TCGA", "data", "Homo_sapiens.GRCh38.85.chr.Introns.gtf"))
+intron_annot <- import(here("data", "Homo_sapiens.GRCh38.85.chr.Introns.gtf"))
 intron_annot <- as.data.frame(intron_annot)
 
 head(intron_annot)
@@ -84,8 +84,8 @@ write.csv(mir_gene_pairs, file=here("TCGA", "output", "supplementary_tables", "G
 # Load the estimates of changes in mRNA abundance (dfe) and transcription (dfi) across TCGA tumors, from BETAS
 
 ```{r}
-dfi_files <- Sys.glob(here("TCGA", "data", "TCGA-*.BETAS_dfi.csv"))
-dfe_files <- Sys.glob(here("TCGA", "data", "TCGA-*.BETAS_dfe.csv"))
+dfi_files <- Sys.glob(here("data", "TCGA-*.BETAS_dfi.csv"))
+dfe_files <- Sys.glob(here("data", "TCGA-*.BETAS_dfe.csv"))
 stopifnot(all(gsub("BETAS.*", "", dfi_files) == gsub("BETAS.*", "", dfe_files)))
 
 # Extract cancer type from filename
@@ -236,7 +236,7 @@ First make a table of host gene id, pri-miRNA id and miRNA family
 mir_gene_pairs_sig <- mir_gene_pairs[mir_gene_pairs$gene_id %in% genes_sig_pos,]
 
 # Load the miRNA families annotation from TargetScan
-fams <- fread(here("TCGA", "data", "miR_Family_Info.txt"))
+fams <- fread(here("data", "miR_Family_Info.txt"))
 fams <- fams[grep("hsa-", fams$`MiRBase ID`), ] 
 
 # Format pri-miRNA IDs to better match

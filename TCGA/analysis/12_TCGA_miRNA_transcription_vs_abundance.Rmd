@@ -66,7 +66,7 @@ miR_expr_data <- sapply(
   unique(dfi_data$cancer),
   function(cancer) {
     miR_expr <- read.table(
-      here("TCGA", "data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
+      here("data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
       header = TRUE
     )
     

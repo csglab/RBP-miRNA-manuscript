@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Correction of mRNA stability estimates of ENCODE RBP KD samples for bias (identified by Alkallas et al.) and batch effects</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-July-27</h4>
+<h4 class="date">2026-September-24</h4>
 
 </div>
 
@@ -1838,12 +1838,12 @@ function toggle_visibility(id1) {
 <pre class="r"><code>library(MASS)
 library(gplots)</code></pre>
 </div>
-<div id="load-the-ddf-estimates-of-changes-in-stability-and-dfi-estimates-of-change-in-pre-mrna-abundance-data-obtained-using-betas." class="section level1" number="2">
-<h1><span class="header-section-number">2</span> Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS.</h1>
+<div id="load-the-ddf-estimates-of-changes-in-stability-and-dfi-estimates-of-change-in-pre-mrna-abundance-data-obtained-using-betas" class="section level1" number="2">
+<h1><span class="header-section-number">2</span> Load the ddf (estimates of changes in stability) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS</h1>
 <p>These were previously filtered to remove estimates with stdev &gt; 0.5 (which were replaced with NA).</p>
-<pre class="r"><code>ddf &lt;- data.table::fread(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, &quot;BETAS.ddf.filtered.allSamples.txt&quot;), header=TRUE) |&gt;
+<pre class="r"><code>ddf &lt;- data.table::fread(here(&quot;data&quot;, &quot;BETAS.ddf.filtered.allSamples.txt&quot;), header=TRUE) |&gt;
   tibble::column_to_rownames(&quot;gene_ID&quot;)
-dfi &lt;- data.table::fread(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, &quot;BETAS.dfi.allSamples.txt&quot;), header=TRUE) |&gt;
+dfi &lt;- data.table::fread(here(&quot;data&quot;, &quot;BETAS.dfi.allSamples.txt&quot;), header=TRUE) |&gt;
   tibble::column_to_rownames(&quot;gene_ID&quot;)</code></pre>
 </div>
 <div id="correction-for-transcription-associated-bias-without-batch-correction" class="section level1" number="3">
@@ -1855,7 +1855,7 @@ palette &lt;- colorRampPalette(c(&quot;blue&quot;, &quot;white&quot;, &quot;red&
 process_cell_line &lt;- function(cell_line) {
   
   # For a given cell line, load its sample list, subset ddf/dfi to those samples
-  samples &lt;- read.table(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, paste0(&quot;ENCODE_sample_list_&quot;, cell_line, &quot;.txt&quot;)))[,1]
+  samples &lt;- read.table(here(&quot;data&quot;, paste0(&quot;ENCODE_sample_list_&quot;, cell_line, &quot;.txt&quot;)))[,1]
   ddf_cl &lt;- ddf[, samples]
   dfi_cl &lt;- dfi[, samples]
 
@@ -1914,7 +1914,7 @@ results_K562 &lt;- K562$results</code></pre>
 <pre class="r"><code>batch_correct_cell_line &lt;- function(cell_line) {
   
   # Load batch IDs
-  batches &lt;- read.table(here(&quot;ENCODE_RBP_KD&quot;, &quot;data&quot;, paste0(&quot;ENCODE_samples_batches_&quot;, cell_line, &quot;.txt&quot;)), header=TRUE, row.names=1)
+  batches &lt;- read.table(here(&quot;data&quot;, paste0(&quot;ENCODE_samples_batches_&quot;, cell_line, &quot;.txt&quot;)), header=TRUE, row.names=1)
   
   # Get the corresponding processed data from the list created earlier
   process_results &lt;- list(
@@ -1988,7 +1988,7 @@ batch_corrected &lt;- sapply(c(&quot;HepG2&quot;, &quot;K562&quot;), batch_corre
 ## [1] stats     graphics  grDevices utils     datasets  methods   base     
 ## 
 ## other attached packages:
-## [1] gplots_3.3.0     MASS_7.3-60.2    here_1.0.2       BiocStyle_2.32.1
+## [1] gplots_3.3.0     MASS_7.3-60.2    here_1.0.2       BiocStyle_2.34.0
 ## 
 ## loaded via a namespace (and not attached):
 ##  [1] vctrs_0.7.3         cli_3.6.6           knitr_1.51         
@@ -1997,8 +1997,8 @@ batch_corrected &lt;- sapply(c(&quot;HepG2&quot;, &quot;K562&quot;), batch_corre
 ## [10] gtools_3.9.5        glue_1.8.1          rprojroot_2.1.1    
 ## [13] htmltools_0.5.9     sass_0.4.10         rmarkdown_2.31     
 ## [16] tibble_3.3.1        evaluate_1.0.5      jquerylib_0.1.4    
-## [19] caTools_1.18.3      bitops_1.0-9        fastmap_1.2.0      
-## [22] yaml_2.3.12         lifecycle_1.0.5     bookdown_0.42      
+## [19] caTools_1.18.4      bitops_1.1-0        fastmap_1.2.0      
+## [22] yaml_2.3.12         lifecycle_1.0.5     bookdown_0.47      
 ## [25] BiocManager_1.30.27 compiler_4.4.1      pkgconfig_2.0.3    
 ## [28] rstudioapi_0.19.0   digest_0.6.39       R6_2.6.1           
 ## [31] pillar_1.11.1       magrittr_2.0.5      bslib_0.11.0       

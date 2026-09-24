@@ -28,7 +28,7 @@ library(tidyverse)
 ```{r, echo = F}
 # Helper function to load and convert BETAS data 
 load_betas_data <- function(filename) {
-  fread(here("ENCODE_tissues_cell_lines", "data", filename)) |>
+  fread(here("data", filename)) |>
     column_to_rownames(var = "V1") |>
     data.matrix()
 }
@@ -97,7 +97,7 @@ cat("dfi_fltr dimensions:", nrow(dfi_fltr), "x", ncol(dfi_fltr), "\n")
 # Load the sample metadata
 
 ```{r}
-met <- read.table(here("ENCODE_tissues_cell_lines", "data", "ENCODE_total_RNA-seq_experiments_metadata.txt"), header = F)
+met <- read.table(here("data", "ENCODE_total_RNA-seq_experiments_metadata.txt"), header = F)
 ```
 
 # Bias correction of differential stability estimates
@@ -123,9 +123,9 @@ write.csv(stab_cor, here("ENCODE_tissues_cell_lines", "output", "supplementary_t
 # Load the 3'UTR nucleotide composition and length annotations, and miRNA seed matches
 
 ```{r}
-UTR_nt <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
-UTR_length <- read.table(here("ENCODE_RBP_KD", "data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
-miR_binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
+UTR_nt <- read.table(here("data", "3UTR_nt_composition_new.txt"), header = TRUE, row.names = NULL)
+UTR_length <- read.table(here("data", "3UTR_length_new.txt"), header = TRUE, row.names = NULL)
+miR_binding <- read.csv(here("data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE)
 ```
 
 # Prepare GLM data

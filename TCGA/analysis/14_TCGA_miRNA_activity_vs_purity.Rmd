@@ -40,7 +40,7 @@ sig_mirs
 # Load tumor purity estimates
 
 ```{r}
-purity_files <- list.files(here("TCGA", "data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
+purity_files <- list.files(here("data"), pattern = "^purity_.*\\.txt$", full.names = TRUE)
 
 purity_data <- purity_files |>
   setNames(str_extract(basename(purity_files), "(?<=purity_)[A-Z]+(?=\\.txt)")) |>

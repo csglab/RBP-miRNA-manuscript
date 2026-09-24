@@ -37,7 +37,7 @@ cancers
 # Load the miRNA families annotation from TargetScan (https://www.targetscan.org/cgi-bin/targetscan/data_download.vert80.cgi), and filter for human miRNAs
 
 ```{r}
-fams <- fread(here("TCGA", "data", "miR_Family_Info.txt"))
+fams <- fread(here("data", "miR_Family_Info.txt"))
 fams <- fams[grep("hsa-", fams$`MiRBase ID`), ] 
 ```
 
@@ -67,7 +67,7 @@ length(miRNAs_TS_fam)
 # Load and preprocess miRNA abundance data for a specific cancer type, select tumor samples
 load_mir_abundance <- function(cancer) {
   miR_expr <- read.table(
-    here("TCGA", "data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
+    here("data", paste0(cancer, ".miRseq_mature_RPM_log2.txt")),
     header = TRUE
   )
   

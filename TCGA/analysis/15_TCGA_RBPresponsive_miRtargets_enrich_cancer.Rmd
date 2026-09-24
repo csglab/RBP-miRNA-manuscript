@@ -64,7 +64,7 @@ names(tcga_stab)
 # Load predicted miRNA binding matrix
 
 ```{r}
-miR_int <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header=TRUE, row.names=1)
+miR_int <- read.csv(here("data", "miRNA_seed_matches_3UTRs2000bp.csv"), header=TRUE, row.names=1)
 
 colnames(miR_int) <- gsub("\\.", "-", colnames(miR_int))
 
@@ -456,12 +456,12 @@ save_density_plot("SUPV3L1", "miR-19-3p", "+", "K562", "TCGA.DM.A1DA.01", "COAD"
 ## Load TCGA differential gene expression data from GDCRNAtools (per cancer type differential expression) and log2(RSEM) data (per sample absolute expression); mRNA stability data was already loaded above and is reused here.
 
 ```{r}
-DE_files <- Sys.glob(here("TCGA", "data", "*_DGEA_GDCRNATools.rds"))
+DE_files <- Sys.glob(here("data", "*_DGEA_GDCRNATools.rds"))
 DE_lst <- DE_files |>
   set_names(str_extract(basename(DE_files), "(?<=TCGA-)[A-Z]+")) |>
   map(readRDS)
 
-logRSEM_files <- list.files(here("TCGA", "data"), pattern = "log2RSEM.csv", full.names = TRUE)
+logRSEM_files <- list.files(here("data"), pattern = "log2RSEM.csv", full.names = TRUE)
 logRSEM_data <- logRSEM_files |>
   set_names(str_extract(basename(logRSEM_files), "^[A-Z]+")) |>
   map(function(file) {

@@ -28,7 +28,7 @@ We are analyzing all 17 cancer types that had at least 5 normal samples.
 
 ```{r}
 # Extract cancer IDs from BETAS_ddf files 
-cancer_IDs <- list.files(here("TCGA", "data"), pattern = "BETAS_ddf\\.csv$") |>
+cancer_IDs <- list.files(here("data"), pattern = "BETAS_ddf\\.csv$") |>
   sub("TCGA-", "", x = _) |>
   sub(".BETAS_ddf.csv", "", x = _)
 
@@ -111,9 +111,9 @@ process_cancer_type <- function(cancer_ID) {
   cat("\n=== Processing", cancer_ID, "===\n")
   
   # Load data matrices
-  ddf <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_ddf.csv")))
-  ddf_stdev <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_ddf_stdev.csv")))
-  dfi <- load_numeric_matrix(here("TCGA", "data", glue("TCGA-{cancer_ID}.BETAS_dfi.csv")))
+  ddf <- load_numeric_matrix(here("data", glue("TCGA-{cancer_ID}.BETAS_ddf.csv")))
+  ddf_stdev <- load_numeric_matrix(here("data", glue("TCGA-{cancer_ID}.BETAS_ddf_stdev.csv")))
+  dfi <- load_numeric_matrix(here("data", glue("TCGA-{cancer_ID}.BETAS_dfi.csv")))
   
   cat("Original dimensions - ddf:", nrow(ddf), "x", ncol(ddf), "\n")
   

@@ -25,7 +25,7 @@ library(glue)
 # Load the miRNA-binding matrix
 
 ```{r}
-binding <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), row.names = 1, header = TRUE)
+binding <- read.csv(here("data", "miRNA_seed_matches_3UTRs2000bp.csv"), row.names = 1, header = TRUE)
 ```
 
 # Define miR-29 predicted targets
@@ -37,7 +37,7 @@ pred_tars <- row.names(binding)[binding[, "miR.29abcd"] > 0]
 # Load the differential gene expression data for the DDX55 KD experiment from ENCODE (HepG2 cells). Retain only non-NA entries
 
 ```{r}
-DDX55_KD <- read.table(here("DDX55_miR29_overexpression_inhibition", "data", "ENCFF410VPN.tsv"))
+DDX55_KD <- read.table(here("data", "ENCFF410VPN.tsv"))
 row.names(DDX55_KD) <- gsub("\\..*", "", row.names(DDX55_KD))
 DDX55_KD$padj <- p.adjust(DDX55_KD$pvalue, method = "fdr")
 DDX55_KD <- DDX55_KD[ !is.na(DDX55_KD$padj), ] 
@@ -46,21 +46,21 @@ DDX55_KD <- DDX55_KD[ !is.na(DDX55_KD$padj), ]
 # Load the differential expression analysis results for the miR-29 mimic experiment in **786-O cells** (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
 
 ```{r}
-mimic_786O <- readRDS(here("DDX55_miR29_overexpression_inhibition", "data", "siDDX55_res_condition_Mimic.miR_vs_Mimic.neg.rds"))
+mimic_786O <- readRDS(here("data", "siDDX55_res_condition_Mimic.miR_vs_Mimic.neg.rds"))
 mimic_786O <- mimic_786O[ !is.na(mimic_786O$padj), ]
 ```
 
 # Load the differential expression analysis results for the miR-29 mimic experiment in **A-498 cells** (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
 
 ```{r}
-mimic_A498 <- readRDS(here("DDX55_miR29_overexpression_inhibition", "data", "DiffRAC_miR29_validation_mimic_res_condition_miR29_mimic_vs_miR29_mimic_ctrl.rds"))
+mimic_A498 <- readRDS(here("data", "DiffRAC_miR29_validation_mimic_res_condition_miR29_mimic_vs_miR29_mimic_ctrl.rds"))
 mimic_A498 <- mimic_A498[ !is.na(mimic_A498$padj), ]
 ```
 
 # Load the differential expression analysis results for the miR-29 **inhibition** experiment in ACHN cells (from the DiffRAC paper https://doi.org/10.1038/s42003-022-03796-w). Retain only non-NA entries
 
 ```{r}
-inhib_ACHN <- readRDS(here("DDX55_miR29_overexpression_inhibition", "data", "DiffRAC_miR29_validation_inhibition_res_condition_miR29_inhibition_vs_miR29_inhibition_ctrl.rds"))
+inhib_ACHN <- readRDS(here("data", "DiffRAC_miR29_validation_inhibition_res_condition_miR29_inhibition_vs_miR29_inhibition_ctrl.rds"))
 inhib_ACHN <- inhib_ACHN[ !is.na(inhib_ACHN$padj), ]
 ```
 

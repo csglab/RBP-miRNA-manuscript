@@ -29,7 +29,7 @@ library(beanplot)
 
 ```{r}
 conversion <- read.csv(
-  here("TCGA", "data", "biomart_ensembl_gene_symbol.txt"),
+  here("data", "biomart_ensembl_gene_symbol.txt"),
   header = TRUE
 )
 ```
@@ -38,7 +38,7 @@ conversion <- read.csv(
 
 ```{r}
 logRSEM_files <- list.files(
-  here("TCGA", "data"),
+  here("data"),
   pattern = "log2RSEM.csv",
   full.names = TRUE
 )

@@ -40,7 +40,7 @@ extract_condition <- function(files) {
   condition
 }
 
-sampleFiles <- grep("GRCh38.gene", list.files(here("CRISPR_RBP_KO", "data")), value = TRUE)
+sampleFiles <- grep("GRCh38.gene", list.files(here("data")), value = TRUE)
 sampleNames <- gsub("\\..*", "", sampleFiles)
 sampleCondition <- extract_condition(sampleFiles)
 
@@ -57,7 +57,7 @@ sampleTable
 ```{r}
 ddsHTSeq <- DESeqDataSetFromHTSeqCount(
   sampleTable = sampleTable,
-  directory = here("CRISPR_RBP_KO", "data"),
+  directory = here("data"),
   design = ~ condition
 )
 ddsHTSeq
@@ -219,7 +219,7 @@ Density plots comparing DGEA (W/O WT) in the KOs to differential stability in EN
 # Load data and define comparison parameters
 stab_HepG2 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_HepG2.csv"), row.names=1)
 stab_K562 <- read.csv(here("ENCODE_RBP_KD", "output", "supplementary_tables", "ENCODE_RBP_KD_stab_corr_bias_batch_shRNAoffTargetEffects_K562.csv"), row.names=1)
-miR_int <- read.csv(here("ENCODE_RBP_KD", "data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE, row.names=1)
+miR_int <- read.csv(here("data", "miRNA_seed_matches_3UTRs2000bp.csv"), header = TRUE, row.names=1)
 
 # RBP-miRNA comparisons: RBP, miRNA, condition, KD_ID, cell_type, direction
 comp_tbl <- tribble(
