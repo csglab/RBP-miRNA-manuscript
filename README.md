@@ -11,19 +11,15 @@ RBP-miRNA-manuscript/
 ├── ENCODE_RBP_KD/
 │   ├── analysis/	
 │   └── output/	
-│
 ├── ENCODE_tissues_cell_lines/
 │   ├── analysis/	
 │   └── output/	
-│
 ├── CRISPR_RBP_KO/
 │   ├── analysis/	
 │   └── output/	
-│
 ├── TCGA/
 │   ├── analysis/	
 │   └── output/	
-│
 └── DDX55_miR29_overexpression_inhibition/
     ├── analysis/	
     └── output/	
