@@ -79,6 +79,5 @@ Notebooks 05 and 08 have no corresponding figure; they produce intermediate/QC d
 
 - Code (notebooks): MIT, see LICENSE.
 - Data and figures: CC-BY-4.0, see LICENSE-DATA.
-- Some bundled data are third party and retain their original licenses (see references in the publication).
 
 Please cite the paper. 
