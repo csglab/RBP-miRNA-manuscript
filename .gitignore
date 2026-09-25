@@ -2,6 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+.DS_Store
 
 # renv library (DO NOT COMMIT)
 renv/library/
