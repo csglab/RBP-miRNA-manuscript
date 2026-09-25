@@ -44,7 +44,7 @@ tables, and data objects required for downstream analyses. All notebooks read da
 
 ## System Requirements and Reproducibility
 
-- R Version:** 4.4.1
+- R Version: 4.4.1
 - Package Management: This project uses the `renv` package to ensure computational reproducibility. 
 
 ## Installation
@@ -81,7 +81,7 @@ Open notebooks in RStudio and run the notebooks in the `analysis/` subfolders se
 | 17_TCGA_DDX55_expression_survival.Rmd | Fig. 5c-d, Supplementary Fig. 10c |
 | 18_DDX55_KD_miR-29_mimic_inhibitor.Rmd | Fig. 5e |
 
-Notebooks 05 and 08 have no corresponding figure; they produce intermediate/QC data that feeds the downstream analyses.
+Notebooks 05 and 08 have no corresponding figure; they produce intermediate data that feeds the downstream analyses.
 
 ## Licence
 
