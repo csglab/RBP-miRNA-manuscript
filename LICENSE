@@ -23,5 +23,4 @@ SOFTWARE.
 ----------------------------------------------------------------------------
 NOTE: This MIT license applies to the CODE in this repository (notebooks). 
 The processed DATA files and the figure files under each modality's `output/`
-directory are licensed separately under CC-BY-4.0; see LICENSE-DATA. Some
-bundled data are third-party and retain their original licenses.
+directory are licensed separately under CC-BY-4.0; see LICENSE-DATA. 
