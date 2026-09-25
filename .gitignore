@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# renv library (DO NOT COMMIT)
+renv/library/
+renv/staging/
+
+# optional cache
+renv/cache/
+.posit/assistant
+
+# Large files
+TCGA/output/supplementary_tables/*_stability_bias_corr*
+TCGA/output/supplementary_tables/TCGA_miRNA_activity.csv
+TCGA/output/rds/TCGA_dfi_long.rds

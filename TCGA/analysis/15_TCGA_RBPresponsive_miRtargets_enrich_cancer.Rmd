@@ -607,6 +607,21 @@ ggsave(
 )
 ```
 
+# Save the final list of candidate interactions, filtered to those shown in the miRNA-activity-based stacked bar plot (i.e. previously defined high-confidence interactions with pancancer relevance, where the miRNA also shows a significant change in activity in at least one tumor)
+
+```{r}
+interactions_final <- interactions |>
+  filter(interaction %in% summary_activity$interaction)
+
+nrow(interactions_final)
+
+write.csv(
+  interactions_final,
+  here("TCGA", "output", "supplementary_tables", "interactions_final.csv"),
+  row.names = FALSE
+)
+```
+
 ```{r}
 sessionInfo()
 ```

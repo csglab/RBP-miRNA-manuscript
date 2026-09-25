@@ -1,0 +1,118 @@
+---
+title: "Download input data"
+author: "Gabrielle Perron"
+date: '`r format(Sys.Date(), "%Y-%B-%d")`'
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(here)
+```
+
+```{r}
+# Zenodo record details
+record_id <- "22679902"
+zip_filename <- "code_input_data.zip"
+
+# Destination directory
+data_dir <- here::here("data")
+dir.create(data_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Increase timeout for large downloads
+old_timeout <- getOption("timeout")
+options(timeout = 3600)
+
+# Temporary files
+zip_path <- tempfile(fileext = ".zip")
+extract_dir <- tempfile()
+
+dir.create(extract_dir)
+
+# Ensure temporary files are removed, even if an error occurs
+on.exit_cleanup <- function() {
+  unlink(zip_path)
+  unlink(extract_dir, recursive = TRUE)
+}
+
+tryCatch({
+
+  # Construct direct Zenodo download URL
+  download_url <- paste0(
+    "https://zenodo.org/records/",
+    record_id,
+    "/files/",
+    utils::URLencode(zip_filename, reserved = TRUE),
+    "?download=1"
+  )
+
+  # Download ZIP
+  message("Downloading data to /data.")
+  download.file(
+    url = download_url,
+    destfile = zip_path,
+    method = "libcurl",
+    mode = "wb"
+  )
+
+  # Check that the archive is readable
+  archive_contents <- unzip(zip_path, list = TRUE)
+
+  if (nrow(archive_contents) == 0) {
+    stop("The ZIP archive appears to be empty.")
+  }
+
+  # Extract files
+  unzip(
+    zipfile = zip_path,
+    exdir = extract_dir
+  )
+
+  # Identify extracted contents
+  extracted_items <- list.files(
+    extract_dir,
+    full.names = TRUE,
+    all.files = TRUE,
+    no.. = TRUE
+  )
+
+  # Copy into data directory
+  if (length(extracted_items) > 0) {
+
+    copied <- file.copy(
+      from = extracted_items,
+      to = data_dir,
+      recursive = TRUE,
+      overwrite = TRUE
+    )
+
+    if (!all(copied)) {
+      stop("Some extracted files could not be copied.")
+    }
+
+  } else {
+    stop("No files were extracted from the ZIP archive.")
+  }
+
+  message("Data downloaded and extracted successfully.")
+
+}, finally = {
+
+  # Clean up temporary files
+  on.exit_cleanup()
+
+  # Restore original timeout
+  options(timeout = old_timeout)
+
+})
+
+message("Data downloaded and extracted successfully.")
+```
+
+```{r}
+sessionInfo()
+```

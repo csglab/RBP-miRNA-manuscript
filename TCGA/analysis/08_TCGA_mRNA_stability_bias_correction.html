@@ -1827,7 +1827,7 @@ function toggle_visibility(id1) {
 
 <h1 class="title toc-ignore">Estimating mRNA stability changes in TCGA tumors</h1>
 <p class="author-name">Gabrielle Perron</p>
-<h4 class="date">2026-August-05</h4>
+<h4 class="date">2026-September-24</h4>
 
 </div>
 
@@ -1841,7 +1841,7 @@ library(glue)</code></pre>
 <h1><span class="header-section-number">2</span> Load the ddf (estimates of changes in stability), ddf_stdev (standard deviations) and dfi (estimates of change in pre-mRNA abundance) data obtained using BETAS</h1>
 <p>We are analyzing all 17 cancer types that had at least 5 normal samples.</p>
 <pre class="r"><code># Extract cancer IDs from BETAS_ddf files 
-cancer_IDs &lt;- list.files(here(&quot;TCGA&quot;, &quot;data&quot;), pattern = &quot;BETAS_ddf\\.csv$&quot;) |&gt;
+cancer_IDs &lt;- list.files(here(&quot;data&quot;), pattern = &quot;^TCGA-.*\\.BETAS_ddf\\.csv$&quot;) |&gt;
   sub(&quot;TCGA-&quot;, &quot;&quot;, x = _) |&gt;
   sub(&quot;.BETAS_ddf.csv&quot;, &quot;&quot;, x = _)
 
@@ -1920,9 +1920,9 @@ process_cancer_type &lt;- function(cancer_ID) {
   cat(&quot;\n=== Processing&quot;, cancer_ID, &quot;===\n&quot;)
   
   # Load data matrices
-  ddf &lt;- load_numeric_matrix(here(&quot;TCGA&quot;, &quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_ddf.csv&quot;)))
-  ddf_stdev &lt;- load_numeric_matrix(here(&quot;TCGA&quot;, &quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_ddf_stdev.csv&quot;)))
-  dfi &lt;- load_numeric_matrix(here(&quot;TCGA&quot;, &quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_dfi.csv&quot;)))
+  ddf &lt;- load_numeric_matrix(here(&quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_ddf.csv&quot;)))
+  ddf_stdev &lt;- load_numeric_matrix(here(&quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_ddf_stdev.csv&quot;)))
+  dfi &lt;- load_numeric_matrix(here(&quot;data&quot;, glue(&quot;TCGA-{cancer_ID}.BETAS_dfi.csv&quot;)))
   
   cat(&quot;Original dimensions - ddf:&quot;, nrow(ddf), &quot;x&quot;, ncol(ddf), &quot;\n&quot;)
   

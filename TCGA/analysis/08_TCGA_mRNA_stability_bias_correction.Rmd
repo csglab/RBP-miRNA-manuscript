@@ -28,7 +28,7 @@ We are analyzing all 17 cancer types that had at least 5 normal samples.
 
 ```{r}
 # Extract cancer IDs from BETAS_ddf files 
-cancer_IDs <- list.files(here("data"), pattern = "BETAS_ddf\\.csv$") |>
+cancer_IDs <- list.files(here("data"), pattern = "^TCGA-.*\\.BETAS_ddf\\.csv$") |>
   sub("TCGA-", "", x = _) |>
   sub(".BETAS_ddf.csv", "", x = _)
 
