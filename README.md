@@ -9,24 +9,24 @@ R project and notebooks required to reproduce the analyses, figures, and tables 
 RBP-miRNA-manuscript/
 ├── RBP-miRNA-manuscript.Rproj
 ├── ENCODE_RBP_KD/
-│   ├── analysis/	Notebooks to reproduce figures (see map below), in Rmd and HTML formats
-│   └── output/	Generated figures, tables and data objects required for downstream analyses
+│   ├── analysis/	
+│   └── output/	
 │
 ├── ENCODE_tissues_cell_lines/
-│   ├── analysis/	Notebooks to reproduce figures (see map below), in Rmd and HTML formats
-│   └── output/	Generated figures, tables and data objects required for downstream analyses
+│   ├── analysis/	
+│   └── output/	
 │
 ├── CRISPR_RBP_KO/
-│   ├── analysis/	Notebooks to reproduce figures (see map below), in Rmd and HTML formats
-│   └── output/	Generated figures, tables and data objects required for downstream analyses
+│   ├── analysis/	
+│   └── output/	
 │
 ├── TCGA/
-│   ├── analysis/	Notebooks to reproduce figures (see map below), in Rmd and HTML formats
-│   └── output/	Generated figures, tables and data objects required for downstream analyses
+│   ├── analysis/	
+│   └── output/	
 │
 └── DDX55_miR29_overexpression_inhibition/
-    ├── analysis/	Notebooks to reproduce figures (see map below), in Rmd and HTML formats
-    └── output/	Generated figures, tables and data objects required for downstream analyses
+    ├── analysis/	
+    └── output/	
 ├── .Rprofile
 ├── .gitattributes
 ├── renv.lock
