@@ -5,28 +5,36 @@ R project and notebooks required to reproduce the analyses, figures, and tables 
 
 ## Repository structure
 
-```
+```text
 RBP-miRNA-manuscript/
-├── RBP-miRNA-manuscript.Rproj
-├── ENCODE_RBP_KD/
-│   ├── analysis/	
-│   └── output/	
-├── ENCODE_tissues_cell_lines/
-│   ├── analysis/	
-│   └── output/	
-├── CRISPR_RBP_KO/
-│   ├── analysis/	
-│   └── output/	
-├── TCGA/
-│   ├── analysis/	
-│   └── output/	
-└── DDX55_miR29_overexpression_inhibition/
-    ├── analysis/	
-    └── output/	
-├── .Rprofile
 ├── .gitattributes
+├── .gitignore
+├── .Rprofile
+├── LICENSE
+├── LICENSE-DATA
+├── README.md
+├── RBP-miRNA-manuscript.Rproj
 ├── renv.lock
-└── renv/
+├── renv/
+│   ├── .gitignore
+│   ├── activate.R
+│   ├── settings.json
+│   └── staging/
+├── CRISPR_RBP_KO/
+│   ├── analysis/
+│   └── output/
+├── DDX55_miR29_overexpression_inhibition/
+│   ├── analysis/
+│   └── output/
+├── ENCODE_RBP_KD/
+│   ├── analysis/
+│   └── output/
+├── ENCODE_tissues_cell_lines/
+│   ├── analysis/
+│   └── output/
+└── TCGA/
+    ├── analysis/
+    └── output/
 ```
 
 Notebooks and their outputs are organized by dataset/experiment. Each `analysis/` 
