@@ -52,7 +52,7 @@ tables, and data objects required for downstream analyses. All notebooks read da
 1. Download and unzip this repository.
 2. Open the `RBP_miRNA_map_manuscript_code.Rproj` file in RStudio.
 3. Run `renv::restore()` in the R console to install the exact package versions required for this analysis. Note: If `renv::restore()` fails to build fgsea from source, run `BiocManager::install("fgsea", update = FALSE)` to install it as a binary instead. Confirm with `packageVersion("fgsea”)` that it matches the version in renv.lock, then re-run `renv::status()` to confirm the project is consistent.
-4. The `data/` directory does not exist yet. Input data needs to be dowloaded by the user and placed inside `data/` in the project directory to run the notebooks. This can be done in a single step by running the first notebook `ENCODE_RBP_KD/analysis/00_download_input_data.Rmd`. Alternatively, manually download the input data `code_input_data.zip` from Zenodo (https://zenodo.org/records/22679902), unzip the file and place all the files it contains inside a `data/` directory in the project main directory. 
+4. The `data/` directory does not exist yet. Input data needs to be dowloaded by the user and placed inside `data/` in the project directory to run the notebooks. This can be done in a single step by running the first notebook `ENCODE_RBP_KD/analysis/00_download_input_data.Rmd`. Alternatively, manually download the input data `code_input_data.zip` from Zenodo (https://zenodo.org/records/22679902), unzip the file and place all the files it contains inside a `data/` directory in the project main directory. Please note that because of Zenodo's slow download speeds, the download can take a while (about 30 min). 
 
 ## Running
 

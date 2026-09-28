@@ -34,7 +34,7 @@ extract_dir <- tempfile()
 dir.create(extract_dir)
 
 # Ensure temporary files are removed, even if an error occurs
-on.exit_cleanup <- function() {
+cleanup_temp_files <- function() {
   unlink(zip_path)
   unlink(extract_dir, recursive = TRUE)
 }
@@ -51,7 +51,7 @@ tryCatch({
   )
 
   # Download ZIP
-  message("Downloading data to /data.")
+  message("Downloading data to /data. This can take several minutes.")
   download.file(
     url = download_url,
     destfile = zip_path,
@@ -80,6 +80,18 @@ tryCatch({
     no.. = TRUE
   )
 
+  # If the archive contains a single top-level directory, copy its
+  # *contents* into data_dir rather than the directory itself, to avoid
+  # creating a nested data/data directory.
+  if (length(extracted_items) == 1 && dir.exists(extracted_items)) {
+    extracted_items <- list.files(
+      extracted_items,
+      full.names = TRUE,
+      all.files = TRUE,
+      no.. = TRUE
+    )
+  }
+
   # Copy into data directory
   if (length(extracted_items) > 0) {
 
@@ -103,7 +115,7 @@ tryCatch({
 }, finally = {
 
   # Clean up temporary files
-  on.exit_cleanup()
+  cleanup_temp_files()
 
   # Restore original timeout
   options(timeout = old_timeout)
